@@ -15,12 +15,11 @@ import kotlin.concurrent.withLock
 import kotlin.math.min
 
 /**
- * Cliente del protocolo rtl_tcp (el que expone la app «SDR driver» en 127.0.0.1:1234).
+ * Client for the rtl_tcp protocol (the one the "SDR driver" app exposes on 127.0.0.1:1234).
  *
- * El servidor emite sin parar bytes IQ (uint8 intercalados I,Q). Un hilo lector drena el
- * socket siempre, para que no se acumulen datos viejos; [capture] pide un bloque de muestras
- * posterior al momento de la llamada (opcionalmente descartando antes un tiempo de asentamiento
- * tras cambiar de frecuencia).
+ * The server streams IQ bytes (interleaved uint8 I,Q) non-stop. A reader thread always drains
+ * the socket so stale data never piles up; [capture] requests a block of samples received
+ * after the call (optionally discarding a settle time first after retuning).
  */
 class RtlTcpClient {
     @Volatile var connected = false
@@ -55,11 +54,11 @@ class RtlTcpClient {
             val header = ByteArray(12)
             input.readFully(header)
             if (String(header, 0, 4, Charsets.US_ASCII) != "RTL0") {
-                throw IOException("Respuesta inesperada: no parece un servidor rtl_tcp")
+                throw IOException("Unexpected response: this does not look like an rtl_tcp server")
             }
             tunerType = ByteBuffer.wrap(header, 4, 4).order(ByteOrder.BIG_ENDIAN).int
             gainCount = ByteBuffer.wrap(header, 8, 4).order(ByteOrder.BIG_ENDIAN).int
-            s.soTimeout = 5000 // si en 5 s no llega nada, la conexión está muerta
+            s.soTimeout = 5000 // if nothing arrives within 5 s, the connection is dead
             socket = s
             out = s.getOutputStream()
             connected = true
@@ -84,7 +83,7 @@ class RtlTcpClient {
         try {
             while (true) {
                 val n = input.read(buf)
-                if (n < 0) throw IOException("SDR driver cerró la conexión")
+                if (n < 0) throw IOException("SDR driver closed the connection")
                 lock.withLock {
                     if (capActive) {
                         val target = capBuf!!
@@ -117,13 +116,13 @@ class RtlTcpClient {
     }
 
     /**
-     * Devuelve [wantBytes] bytes IQ recibidos después de la llamada, tras descartar [skipBytes].
-     * Lanza IOException si la conexión se cae o no llegan datos a tiempo.
+     * Returns [wantBytes] IQ bytes received after the call, after discarding [skipBytes].
+     * Throws IOException if the connection drops or data does not arrive in time.
      */
     fun capture(wantBytes: Int, skipBytes: Long = 0, timeoutMs: Long = 4000): ByteArray {
         val buf = ByteArray(wantBytes)
         lock.withLock {
-            if (!connected) throw IOException(lastError ?: "SDR desconectado")
+            if (!connected) throw IOException(lastError ?: "SDR disconnected")
             capBuf = buf
             capFilled = 0
             capSkip = skipBytes
@@ -135,17 +134,17 @@ class RtlTcpClient {
             capActive = false
             capBuf = null
             if (capFilled < wantBytes) {
-                throw IOException(lastError ?: "Tiempo agotado esperando muestras del SDR")
+                throw IOException(lastError ?: "Timed out waiting for samples from the SDR")
             }
         }
         return buf
     }
 
-    // ---- comandos (5 bytes: código + uint32 big-endian) ----
+    // ---- commands (5 bytes: code + big-endian uint32) ----
     private fun cmd(code: Int, value: Int) {
         val b = ByteBuffer.allocate(5).order(ByteOrder.BIG_ENDIAN).put(code.toByte()).putInt(value).array()
         synchronized(outLock) {
-            val o = out ?: throw IOException("SDR desconectado")
+            val o = out ?: throw IOException("SDR disconnected")
             o.write(b)
             o.flush()
         }

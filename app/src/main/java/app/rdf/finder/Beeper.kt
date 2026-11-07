@@ -7,9 +7,9 @@ import kotlin.math.PI
 import kotlin.math.max
 import kotlin.math.sin
 
-/** Tono continuo cuya frecuencia sigue a la señal: permite apuntar la antena sin mirar la pantalla. */
+/** Continuous tone whose pitch follows the signal: lets you aim the antenna without looking at the screen. */
 class Beeper {
-    /** Frecuencia del tono en Hz; 0 = silencio. */
+    /** Tone frequency in Hz; 0 = silence. */
     @Volatile var freqHz = 0.0
     @Volatile private var running = false
     private var thread: Thread? = null

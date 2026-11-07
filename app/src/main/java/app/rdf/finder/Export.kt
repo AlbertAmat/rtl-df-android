@@ -8,13 +8,13 @@ import org.json.JSONObject
 import java.io.File
 import java.util.Locale
 
-/** Exportación de una sesión a CSV / GeoJSON y compartición con otras apps. */
+/** Exports a session to CSV / GeoJSON and shares it with other apps. */
 object Export {
     private fun dir(ctx: Context): File =
         File(ctx.getExternalFilesDir(null) ?: ctx.filesDir, "exports").apply { mkdirs() }
 
     fun csv(ctx: Context, session: SessionRow, pts: List<PointRow>): File {
-        val f = File(dir(ctx), "rdf_sesion_${session.id}.csv")
+        val f = File(dir(ctx), "rdf_session_${session.id}.csv")
         val sb = StringBuilder()
         sb.append("id,ts,ts_src,lat,lon,alt,acc_m,freq_hz,power_db,snr_db,gain,bearing_mag,declination,offset,bearing_true\n")
         for (p in pts) {
@@ -53,7 +53,7 @@ object Export {
                     .put("properties", JSONObject().put("estimate", true).put("rms_m", est.rmsM)),
             )
         }
-        val f = File(dir(ctx), "rdf_sesion_${session.id}.geojson")
+        val f = File(dir(ctx), "rdf_session_${session.id}.geojson")
         f.writeText(JSONObject().put("type", "FeatureCollection").put("features", feats).toString())
         return f
     }
@@ -65,6 +65,6 @@ object Export {
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        ctx.startActivity(Intent.createChooser(send, "Compartir").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        ctx.startActivity(Intent.createChooser(send, "Share").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 }

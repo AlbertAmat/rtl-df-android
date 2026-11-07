@@ -30,7 +30,7 @@ data class PointSample(
     val freqHz: Double,
 )
 
-/** Mide de forma continua la potencia en una frecuencia (canal de ancho configurable). */
+/** Continuously measures power at a frequency (channel width is configurable). */
 class Tracker {
     private data class Sample(val t: Long, val power: Double, val snr: Double, val clip: Boolean)
 
@@ -93,8 +93,8 @@ class Tracker {
     }
 
     /**
-     * Potencia que se guarda con cada punto: percentil 90 de las últimas medidas. La mediana
-     * fallaría con emisiones intermitentes (p. ej. PTT: casi siempre solo hay ruido).
+     * Power stored with each point: 90th percentile of the latest measurements. The median
+     * would fail with intermittent transmissions (e.g. PTT: it is mostly just noise).
      */
     fun sampleForPoint(windowMs: Long = 3000): PointSample? {
         val now = System.currentTimeMillis()
@@ -112,7 +112,7 @@ class Tracker {
 
     companion object {
         const val FS = 1_024_000
-        const val OFFSET = 200_000.0 // se sintoniza desplazado para que el canal no caiga en el pico DC
-        const val READ = 65536       // ~64 ms por medida
+        const val OFFSET = 200_000.0 // tuned with an offset so the channel does not fall on the DC spike
+        const val READ = 65536       // ~64 ms per measurement
     }
 }

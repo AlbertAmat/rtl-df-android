@@ -42,7 +42,7 @@ data class HeadingInfo(
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = app.getSharedPreferences("rdf", Context.MODE_PRIVATE)
 
-    /** Campos de la interfaz persistentes (estado observable por Compose). */
+    /** Persistent UI fields (state observable by Compose). */
     val fields = mutableStateMapOf<String, String>().apply {
         for ((k, v) in DEFAULTS) put(k, prefs.getString(k, v) ?: v)
     }
@@ -55,7 +55,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun fd(k: String): Double? = f(k).trim().replace(',', '.').toDoubleOrNull()
 
-    /** Ganancia: vacío o «auto» = AGC del tuner (null). */
+    /** Gain: empty or "auto" = tuner AGC (null). */
     private fun gain(k: String): Double? {
         val s = f(k).trim()
         if (s.isEmpty() || s.equals("auto", ignoreCase = true)) return null
@@ -78,7 +78,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val live: StateFlow<LiveState> = _live.asStateFlow()
     private val _sdrConnected = MutableStateFlow(false)
     val sdrConnected: StateFlow<Boolean> = _sdrConnected.asStateFlow()
-    private val _sdrInfo = MutableStateFlow("Desconectado")
+    private val _sdrInfo = MutableStateFlow("Disconnected")
     val sdrInfo: StateFlow<String> = _sdrInfo.asStateFlow()
     private val _gpsValid = MutableStateFlow(false)
     val gpsValid: StateFlow<Boolean> = _gpsValid.asStateFlow()
@@ -111,7 +111,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             gps.fix.collect { fix -> if (fix != null) declination = GpsProvider.declination(fix) }
         }
         viewModelScope.launch {
-            // El tono sigue al SNR: más agudo = más señal
+            // Pitch follows SNR: higher pitch = stronger signal
             live.collect { l ->
                 val snr = l.snrDb
                 beeper.freqHz =
@@ -142,7 +142,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
-    // ------------------------------------------------------------ sensores
+    // ------------------------------------------------------------ sensors
     fun startSensors(locationGranted: Boolean) {
         if (locationGranted) gps.start()
         compass.start()
@@ -153,17 +153,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         compass.stop()
     }
 
-    // ------------------------------------------------------------ conexión SDR
+    // ------------------------------------------------------------ SDR connection
     fun connect() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                _sdrInfo.value = "Conectando…"
+                _sdrInfo.value = "Connecting…"
                 client.connect(f("sdr_host").trim(), (fd("sdr_port") ?: 1234.0).toInt())
                 _sdrConnected.value = true
-                _sdrInfo.value = "Conectado · tuner ${tunerName(client.tunerType)}"
+                _sdrInfo.value = "Connected · tuner ${tunerName(client.tunerType)}"
             } catch (e: Exception) {
-                _sdrInfo.value = "Desconectado"
-                msg("No se pudo conectar (${e.message}). ¿Está SDR driver arrancado con «Start»?")
+                _sdrInfo.value = "Disconnected"
+                msg("Could not connect (${e.message}). Is SDR driver running (tap \"Start\")?")
             }
         }
     }
@@ -173,18 +173,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             job?.cancelAndJoin()
             client.close()
             _sdrConnected.value = false
-            _sdrInfo.value = "Desconectado"
+            _sdrInfo.value = "Disconnected"
         }
     }
 
     private fun tunerName(t: Int) = when (t) {
         1 -> "E4000"; 2 -> "FC0012"; 3 -> "FC0013"; 4 -> "FC2580"; 5 -> "R820T/2"; 6 -> "R828D"
-        else -> "desconocido"
+        else -> "unknown"
     }
 
     private fun launchSdr(newMode: Mode, block: suspend () -> Unit) {
         if (!client.connected) {
-            msg("SDR no conectado: pulsa «Conectar SDR»")
+            msg("SDR not connected: tap \"Connect SDR\"")
             return
         }
         sdr.settleMs = (fd("sdr_settle") ?: 80.0).toInt().coerceIn(20, 1000)
@@ -198,7 +198,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    msg("Error del SDR: ${e.message ?: e.javaClass.simpleName}")
+                    msg("SDR error: ${e.message ?: e.javaClass.simpleName}")
                 } finally {
                     _mode.value = Mode.Idle
                 }
@@ -210,34 +210,34 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { job?.cancelAndJoin() }
     }
 
-    // ------------------------------------------------------------ escaneo
+    // ------------------------------------------------------------ scan
     fun startScan() {
         val f0 = fd("scan_start")
         val f1 = fd("scan_stop")
         val dur = fd("scan_dur")
         val thr = fd("scan_thr")
         if (f0 == null || f1 == null || dur == null || thr == null) {
-            msg("Revisa los valores del escaneo")
+            msg("Check the scan values")
             return
         }
         if (f0 < 24 || f1 > 1766 || f1 <= f0) {
-            msg("Rango no válido (24–1766 MHz y «Hasta» mayor que «Desde»)")
+            msg("Invalid range (24–1766 MHz and \"To\" greater than \"From\")")
             return
         }
         val p = ScanParams(f0 * 1e6, f1 * 1e6, dur.coerceIn(5.0, 3600.0), thr.coerceIn(3.0, 30.0), gain("scan_gain"))
         launchSdr(Mode.Scan) { Scanner.run(sdr, p, _scan) }
     }
 
-    // ------------------------------------------------------------ rastreo
+    // ------------------------------------------------------------ tracking
     fun startTrack() {
         val fMhz = fd("trk_freq")
         val bw = fd("trk_bw") ?: 12.5
         if (fMhz == null || fMhz < 24 || fMhz > 1766) {
-            msg("Frecuencia no válida (24–1766 MHz)")
+            msg("Invalid frequency (24–1766 MHz)")
             return
         }
         if (bw < 2 || bw > 300) {
-            msg("Ancho de canal: 2–300 kHz")
+            msg("Channel width: 2–300 kHz")
             return
         }
         val g = gain("trk_gain")
@@ -248,7 +248,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    // ------------------------------------------------------------ sesiones y puntos
+    // ------------------------------------------------------------ sessions and points
     private fun ensureSession(freq: Double) {
         val cur = currentSessionId?.let { db.getSession(it) }
         if (cur == null || abs(cur.freqHz - freq) > 1000) currentSessionId = db.createSession(freq)
@@ -272,7 +272,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 err = e.message
             }
         } else {
-            err = "Registra al menos 2 puntos desde sitios distintos"
+            err = "Record at least 2 points from different locations"
         }
         _session.value = SessionData(s, pts, est, err)
     }
@@ -281,38 +281,38 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) { loadSessionNow() }
     }
 
-    /** Registra un punto con la posición GPS, el rumbo (brújula del móvil o escrito) y la potencia. */
+    /** Records a point with the GPS position, bearing (phone compass or typed) and power. */
     fun recordPoint() {
         viewModelScope.launch(Dispatchers.Default) {
             if (_mode.value != Mode.Track) {
-                msg("Inicia el rastreo antes de registrar un punto")
+                msg("Start tracking before recording a point")
                 return@launch
             }
             val sid = currentSessionId
             if (sid == null) {
-                msg("No hay sesión activa")
+                msg("No active session")
                 return@launch
             }
             val fix = gps.fix.value
             if (fix == null || !gps.isValid()) {
-                msg("Sin fix GPS válido: espera a tener cielo despejado")
+                msg("No valid GPS fix: wait for a clear view of the sky")
                 return@launch
             }
             val meas = tracker.sampleForPoint()
             if (meas == null) {
-                msg("Aún no hay suficientes medidas: espera un segundo")
+                msg("Not enough measurements yet: wait a second")
                 return@launch
             }
             val useSensor = f("use_sensor") == "true"
             val mag: Double = if (useSensor) {
                 compass.meanHeading() ?: run {
-                    msg("Sin rumbo de la brújula (¿antena muy vertical?)")
+                    msg("No compass bearing (antenna too vertical?)")
                     return@launch
                 }
             } else {
                 val typed = fd("trk_bearing")
                 if (typed == null || typed < 0 || typed > 360) {
-                    msg("Escribe el rumbo de la brújula (0–360°)")
+                    msg("Enter the compass bearing (0–360°)")
                     return@launch
                 }
                 typed
@@ -334,10 +334,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 loadSessionNow()
             }
             val warn = ArrayList<String>()
-            if (meas.snrDb < 6) warn.add("SNR bajo (${meas.snrDb.roundToInt()} dB): puede que no sea la emisión buscada")
-            if (meas.clipping) warn.add("Señal saturada: baja la ganancia")
-            if (useSensor && compass.accuracy.value < 2) warn.add("Brújula sin calibrar: mueve el móvil en ocho")
-            msg(if (warn.isEmpty()) "Punto registrado · rumbo ${bearingTrue.roundToInt()}°" else "⚠ " + warn.joinToString(" · "))
+            if (meas.snrDb < 6) warn.add("Low SNR (${meas.snrDb.roundToInt()} dB): this may not be the target transmission")
+            if (meas.clipping) warn.add("Signal clipping: lower the gain")
+            if (useSensor && compass.accuracy.value < 2) warn.add("Compass not calibrated: move the phone in a figure 8")
+            msg(if (warn.isEmpty()) "Point recorded · bearing ${bearingTrue.roundToInt()}°" else "⚠ " + warn.joinToString(" · "))
         }
     }
 
@@ -351,13 +351,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun newSession() {
         val fMhz = fd("trk_freq")
         if (fMhz == null || fMhz < 24 || fMhz > 1766) {
-            msg("Escribe antes la frecuencia en la pestaña Rastrear")
+            msg("Enter the frequency in the Track tab first")
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
             currentSessionId = db.createSession(fMhz * 1e6)
             loadSessionNow()
-            msg("Nueva caza creada")
+            msg("New hunt created")
         }
     }
 
@@ -378,7 +378,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val d = _session.value
         val s = d.session
         if (s == null) {
-            msg("No hay sesión que exportar")
+            msg("No session to export")
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
@@ -387,7 +387,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    // ------------------------------------------------------------ sonido
+    // ------------------------------------------------------------ sound
     fun setSound(on: Boolean) {
         _sound.value = on
         if (on) {

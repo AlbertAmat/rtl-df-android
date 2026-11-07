@@ -2,9 +2,9 @@ package app.rdf.finder
 
 import kotlin.math.abs
 
-/** Capa sobre [RtlTcpClient]: configurar, sintonizar y leer muestras IQ en float [-1, 1]. */
+/** Layer over [RtlTcpClient]: configure, tune and read IQ samples as floats in [-1, 1]. */
 class Sdr(private val client: RtlTcpClient) {
-    /** Tiempo (ms) que se descarta tras cambiar de frecuencia (PLL + buffers en vuelo). */
+    /** Time (ms) discarded after retuning (PLL + in-flight buffers). */
     @Volatile var settleMs = 80
     @Volatile var ppm = 0
 
@@ -15,7 +15,7 @@ class Sdr(private val client: RtlTcpClient) {
 
     private fun bytesFor(ms: Int): Long = fs.toLong() * 2L * ms / 1000L
 
-    /** gain == null: AGC del tuner. Descarta ~300 ms de datos con la configuración anterior. */
+    /** gain == null: tuner AGC. Discards ~300 ms of data captured with the previous configuration. */
     fun configure(sampleRate: Int, gain: Double?) {
         client.setSampleRate(sampleRate)
         fs = sampleRate
@@ -34,7 +34,7 @@ class Sdr(private val client: RtlTcpClient) {
     }
 
     private fun snapGain(tenths: Int): Int {
-        // Tabla de ganancias del R820T/R820T2/R828D (tuner 5 y 6); otros tuners: valor tal cual
+        // Gain table for the R820T/R820T2/R828D (tuner 5 and 6); other tuners: value as is
         if (client.tunerType != 5 && client.tunerType != 6) return tenths
         return R820T_GAINS.minByOrNull { abs(it - tenths) } ?: tenths
     }
@@ -43,7 +43,7 @@ class Sdr(private val client: RtlTcpClient) {
         client.capture(wantBytes = 2, skipBytes = bytesFor(ms), timeoutMs = ms + 3000L)
     }
 
-    /** Sintoniza y lee [nSamples] muestras ya asentadas. */
+    /** Tunes and reads [nSamples] already-settled samples. */
     fun tuneAndRead(freqHz: Long, nSamples: Int): FloatArray {
         client.setFrequency(freqHz)
         return toIq(client.capture(nSamples * 2, bytesFor(settleMs), timeoutMs = readTimeout(nSamples) + settleMs))
@@ -54,7 +54,7 @@ class Sdr(private val client: RtlTcpClient) {
         discard(maxOf(settleMs, 150))
     }
 
-    /** Lee [nSamples] muestras sin descartar nada (rastreo continuo). */
+    /** Reads [nSamples] samples without discarding anything (continuous tracking). */
     fun read(nSamples: Int): FloatArray =
         toIq(client.capture(nSamples * 2, 0, timeoutMs = readTimeout(nSamples)))
 

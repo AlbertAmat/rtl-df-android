@@ -18,7 +18,7 @@ class MainActivity : ComponentActivity() {
 
     private val permLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) vm.startSensors(true) else vm.postMessage("Sin permiso de ubicación: no habrá GPS")
+            if (granted) vm.startSensors(true) else vm.postMessage("Location permission denied: no GPS")
         }
 
     private fun hasLocation() =
@@ -27,7 +27,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) // la captura se para si se apaga la pantalla
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) // capture stops if the screen turns off
         configureOsmdroid()
         if (!hasLocation()) permLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
         setContent { RdfApp(vm) }
@@ -43,7 +43,7 @@ class MainActivity : ComponentActivity() {
         vm.stopSensors()
     }
 
-    /** Las teclas de volumen registran un punto (pulsar la pantalla mueve la antena). */
+    /** Volume keys record a point (touching the screen moves the antenna). */
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         val isVolume = keyCode == KeyEvent.KEYCODE_VOLUME_DOWN || keyCode == KeyEvent.KEYCODE_VOLUME_UP
         if (isVolume && vm.f("use_volume") == "true" && vm.mode.value == Mode.Track) {

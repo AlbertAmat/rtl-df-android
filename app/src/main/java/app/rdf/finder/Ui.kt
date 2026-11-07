@@ -74,7 +74,7 @@ private val BAD = Color(0xFF5C1F1D)
 private val NEUTRAL = Color(0xFF263241)
 private val WARN = Color(0xFFD29922)
 
-/** Referencia compartida al MapView (para centrar y descargar zonas). */
+/** Shared reference to the MapView (used to recenter and download areas). */
 class MapHolder {
     var map: MapView? = null
     var centered = false
@@ -99,7 +99,7 @@ fun RdfApp(vm: MainViewModel) {
                     Header(vm)
                     Box(Modifier.weight(0.36f).fillMaxWidth()) { MapPane(vm, holder) }
                     TabRow(selectedTabIndex = tab) {
-                        listOf("Escanear", "Rastrear", "Sesiones", "Ajustes").forEachIndexed { i, t ->
+                        listOf("Scan", "Track", "Sessions", "Settings").forEachIndexed { i, t ->
                             Tab(selected = tab == i, onClick = { tab = i }, text = { Text(t, fontSize = 13.sp) })
                         }
                     }
@@ -120,7 +120,7 @@ fun RdfApp(vm: MainViewModel) {
     }
 }
 
-// ------------------------------------------------------------------ cabecera y mapa
+// ------------------------------------------------------------------ header and map
 @Composable
 fun Chip(text: String, color: Color) {
     Surface(shape = RoundedCornerShape(10.dp), color = color) {
@@ -141,13 +141,13 @@ fun Header(vm: MainViewModel) {
     ) {
         val acc = fix?.accM?.roundToInt()?.toString() ?: "?"
         val sats = fix?.sats?.toString() ?: "?"
-        Chip(if (gpsValid) "GPS ±$acc m · $sats sat" else "GPS: sin fix", if (gpsValid) OK else BAD)
-        Chip(if (connected) "SDR conectado" else "SDR desconectado", if (connected) OK else BAD)
+        Chip(if (gpsValid) "GPS ±$acc m · $sats sat" else "GPS: no fix", if (gpsValid) OK else BAD)
+        Chip(if (connected) "SDR connected" else "SDR disconnected", if (connected) OK else BAD)
         Chip(
             when (mode) {
-                Mode.Idle -> "inactivo"
-                Mode.Scan -> "escaneando"
-                Mode.Track -> "rastreando"
+                Mode.Idle -> "idle"
+                Mode.Scan -> "scanning"
+                Mode.Track -> "tracking"
             },
             NEUTRAL,
         )
@@ -209,14 +209,14 @@ fun MapPane(vm: MainViewModel, holder: MapHolder) {
         Button(
             onClick = {
                 val fx = fix
-                if (fx != null) mapView.controller.animateTo(GeoPoint(fx.lat, fx.lon)) else vm.postMessage("Sin fix GPS")
+                if (fx != null) mapView.controller.animateTo(GeoPoint(fx.lat, fx.lon)) else vm.postMessage("No GPS fix")
             },
             modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp),
         ) { Text("◎") }
     }
 }
 
-// ------------------------------------------------------------------ componentes
+// ------------------------------------------------------------------ components
 @Composable
 fun NumField(
     vm: MainViewModel,
@@ -266,19 +266,19 @@ fun Spark(h: List<Float>, modifier: Modifier) {
 
 private fun openDriver(ctx: Context, vm: MainViewModel) {
     val i = ctx.packageManager.getLaunchIntentForPackage("marto.rtl_tcp_andro")
-    if (i == null) vm.postMessage("No encuentro la app «SDR driver»") else ctx.startActivity(i)
+    if (i == null) vm.postMessage("Could not find the \"SDR driver\" app") else ctx.startActivity(i)
 }
 
 private fun openInMaps(ctx: Context, lat: Double, lon: Double) {
-    val uri = String.format(Locale.US, "geo:%.6f,%.6f?q=%.6f,%.6f(Emisor)", lat, lon, lat, lon)
+    val uri = String.format(Locale.US, "geo:%.6f,%.6f?q=%.6f,%.6f(Emitter)", lat, lon, lat, lon)
     try {
         ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uri)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     } catch (e: Exception) {
-        // sin app de mapas: no pasa nada, las coordenadas están en pantalla
+        // no maps app installed: fine, the coordinates are on screen
     }
 }
 
-// ------------------------------------------------------------------ pestaña Escanear
+// ------------------------------------------------------------------ Scan tab
 @Composable
 fun Preset(vm: MainViewModel, label: String, from: String, to: String, modifier: Modifier) {
     OutlinedButton(
@@ -304,29 +304,29 @@ fun ScanTab(vm: MainViewModel, goTrack: () -> Unit) {
         Preset(vm, "ISM 433", "433", "434.8", Modifier.weight(1f))
     }
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        NumField(vm, "scan_start", "Desde (MHz)", Modifier.weight(1f))
-        NumField(vm, "scan_stop", "Hasta (MHz)", Modifier.weight(1f))
+        NumField(vm, "scan_start", "From (MHz)", Modifier.weight(1f))
+        NumField(vm, "scan_stop", "To (MHz)", Modifier.weight(1f))
     }
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        NumField(vm, "scan_dur", "Duración (s)", Modifier.weight(1f))
-        NumField(vm, "scan_thr", "Umbral SNR (dB)", Modifier.weight(1f))
-        NumField(vm, "scan_gain", "Ganancia (dB)", Modifier.weight(1f))
+        NumField(vm, "scan_dur", "Duration (s)", Modifier.weight(1f))
+        NumField(vm, "scan_thr", "SNR threshold (dB)", Modifier.weight(1f))
+        NumField(vm, "scan_gain", "Gain (dB)", Modifier.weight(1f))
     }
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         Button(onClick = { vm.startScan() }, enabled = mode != Mode.Scan, modifier = Modifier.weight(1f)) {
-            Text("Iniciar escaneo")
+            Text("Start scan")
         }
         OutlinedButton(onClick = { vm.stopAll() }, enabled = mode == Mode.Scan, modifier = Modifier.weight(1f)) {
-            Text("Parar")
+            Text("Stop")
         }
     }
     LinearProgressIndicator(progress = { scan.progress }, modifier = Modifier.fillMaxWidth())
     Text(
         if (scan.sweeps > 0 || scan.running) {
-            "${if (scan.running) "Escaneando" else "Terminado"} · ${scan.sweeps} barridos · " +
-                "${scan.elapsedS.roundToInt()}/${scan.durationS.roundToInt()} s · ${scan.results.size} emisoras"
+            "${if (scan.running) "Scanning" else "Finished"} · ${scan.sweeps} sweeps · " +
+                "${scan.elapsedS.roundToInt()}/${scan.durationS.roundToInt()} s · ${scan.results.size} emitters"
         } else {
-            "Sin resultados. Conecta el SDR en la pestaña Rastrear e inicia el escaneo."
+            "No results yet. Connect the SDR in the Track tab and start a scan."
         },
         fontSize = 13.sp,
         color = Color.Gray,
@@ -335,7 +335,7 @@ fun ScanTab(vm: MainViewModel, goTrack: () -> Unit) {
         Text("MHz", Modifier.weight(1.3f), fontWeight = FontWeight.Bold, fontSize = 13.sp)
         Text("dB", Modifier.weight(0.8f), fontWeight = FontWeight.Bold, fontSize = 13.sp)
         Text("SNR", Modifier.weight(0.8f), fontWeight = FontWeight.Bold, fontSize = 13.sp)
-        Text("Activ.", Modifier.weight(0.9f), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        Text("Activity", Modifier.weight(0.9f), fontWeight = FontWeight.Bold, fontSize = 13.sp)
         Text("", Modifier.weight(1.2f))
     }
     scan.results.forEach { r ->
@@ -350,12 +350,12 @@ fun ScanTab(vm: MainViewModel, goTrack: () -> Unit) {
                     goTrack()
                 },
                 modifier = Modifier.weight(1.2f),
-            ) { Text("Rastrear", fontSize = 12.sp) }
+            ) { Text("Track", fontSize = 12.sp) }
         }
     }
 }
 
-// ------------------------------------------------------------------ pestaña Rastrear
+// ------------------------------------------------------------------ Track tab
 @Composable
 fun TrackTab(vm: MainViewModel, holder: MapHolder) {
     val ctx = LocalContext.current
@@ -370,28 +370,28 @@ fun TrackTab(vm: MainViewModel, holder: MapHolder) {
 
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         Button(onClick = { if (connected) vm.disconnect() else vm.connect() }, modifier = Modifier.weight(1f)) {
-            Text(if (connected) "Desconectar SDR" else "Conectar SDR", fontSize = 13.sp)
+            Text(if (connected) "Disconnect SDR" else "Connect SDR", fontSize = 13.sp)
         }
         OutlinedButton(onClick = { openDriver(ctx, vm) }, modifier = Modifier.weight(1f)) {
-            Text("Abrir SDR driver", fontSize = 13.sp)
+            Text("Open SDR driver", fontSize = 13.sp)
         }
     }
-    Text(if (connected) sdrInfo else "Desconectado", fontSize = 12.sp, color = Color.Gray)
+    Text(if (connected) sdrInfo else "Disconnected", fontSize = 12.sp, color = Color.Gray)
 
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        NumField(vm, "trk_freq", "Frecuencia (MHz)", Modifier.weight(1.4f))
-        NumField(vm, "trk_bw", "Canal (kHz)", Modifier.weight(1f))
-        NumField(vm, "trk_gain", "Gan. (dB)", Modifier.weight(1f))
+        NumField(vm, "trk_freq", "Frequency (MHz)", Modifier.weight(1.4f))
+        NumField(vm, "trk_bw", "Channel (kHz)", Modifier.weight(1f))
+        NumField(vm, "trk_gain", "Gain (dB)", Modifier.weight(1f))
     }
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         Button(onClick = { vm.startTrack() }, enabled = mode != Mode.Track, modifier = Modifier.weight(1f)) {
-            Text("Iniciar rastreo", fontSize = 13.sp)
+            Text("Start tracking", fontSize = 13.sp)
         }
         OutlinedButton(onClick = { vm.stopAll() }, enabled = mode == Mode.Track, modifier = Modifier.weight(1f)) {
-            Text("Parar", fontSize = 13.sp)
+            Text("Stop", fontSize = 13.sp)
         }
         OutlinedButton(onClick = { vm.setSound(!sound) }, modifier = Modifier.weight(1f)) {
-            Text(if (sound) "🔊 Sonido" else "🔇 Sonido", fontSize = 13.sp)
+            Text(if (sound) "🔊 Sound" else "🔇 Sound", fontSize = 13.sp)
         }
     }
 
@@ -406,48 +406,48 @@ fun TrackTab(vm: MainViewModel, holder: MapHolder) {
                 Text(" dB", Modifier.padding(bottom = 8.dp), color = Color.Gray)
             }
             Text(
-                "SNR ${live.snrDb?.let { f1(it) } ?: "--"} dB · pico 10 s ${live.peakDb?.let { f1(it) } ?: "--"} dB",
+                "SNR ${live.snrDb?.let { f1(it) } ?: "--"} dB · 10 s peak ${live.peakDb?.let { f1(it) } ?: "--"} dB",
                 fontSize = 13.sp,
                 color = Color.Gray,
             )
-            if (live.clipping) Text("⚠ Señal saturada: baja la ganancia", color = WARN, fontSize = 13.sp)
+            if (live.clipping) Text("⚠ Signal clipping: lower the gain", color = WARN, fontSize = 13.sp)
             Spark(live.history, Modifier.fillMaxWidth().height(70.dp))
         }
     }
 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("Rumbo de la antena", fontSize = 12.sp, color = Color.Gray)
+            Text("Antenna bearing", fontSize = 12.sp, color = Color.Gray)
             if (useSensor) {
                 Text(
-                    heading.trueDeg?.let { "${it.roundToInt()}°" } ?: if (heading.hasSensor) "-- (muy vertical)" else "sin sensor",
+                    heading.trueDeg?.let { "${it.roundToInt()}°" } ?: if (heading.hasSensor) "-- (too vertical)" else "no sensor",
                     fontSize = 36.sp,
                     fontWeight = FontWeight.Bold,
                 )
                 val acc = when (heading.accuracy) {
-                    3 -> "alta"; 2 -> "media"; 1 -> "baja"; else -> "no fiable"
+                    3 -> "high"; 2 -> "medium"; 1 -> "low"; else -> "unreliable"
                 }
                 Text(
-                    "magnético ${heading.magnetic?.let { "${it.roundToInt()}°" } ?: "--"} · " +
-                        "declinación ${f1(heading.declination)}° · calibración $acc",
+                    "magnetic ${heading.magnetic?.let { "${it.roundToInt()}°" } ?: "--"} · " +
+                        "declination ${f1(heading.declination)}° · calibration $acc",
                     fontSize = 12.sp,
                     color = Color.Gray,
                 )
                 if (heading.accuracy < 2) {
-                    Text("Calibra la brújula moviendo el móvil en forma de 8", color = WARN, fontSize = 12.sp)
+                    Text("Calibrate the compass by moving the phone in a figure 8", color = WARN, fontSize = 12.sp)
                 }
             } else {
-                NumField(vm, "trk_bearing", "Rumbo de tu brújula (° magnético)", Modifier.fillMaxWidth())
+                NumField(vm, "trk_bearing", "Bearing from your compass (° magnetic)", Modifier.fillMaxWidth())
             }
         }
     }
-    SwitchRow("Usar la brújula del móvil", useSensor) { vm.setField("use_sensor", it.toString()) }
+    SwitchRow("Use the phone compass", useSensor) { vm.setField("use_sensor", it.toString()) }
 
     Button(
         onClick = { vm.recordPoint() },
         enabled = mode == Mode.Track,
         modifier = Modifier.fillMaxWidth().height(56.dp),
-    ) { Text("📍 Registrar punto aquí  (o tecla de volumen)", fontSize = 15.sp) }
+    ) { Text("📍 Record point here  (or volume key)", fontSize = 15.sp) }
 
     EstimateCard(data, holder)
     PointsList(vm, data)
@@ -461,13 +461,13 @@ fun EstimateCard(data: SessionData, holder: MapHolder) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             val e = data.estimate
             if (e == null) {
-                Text("Estimación: ${data.estimateError ?: ""}", fontSize = 14.sp)
+                Text("Estimate: ${data.estimateError ?: ""}", fontSize = 14.sp)
             } else {
-                Text("Emisor estimado", fontWeight = FontWeight.Bold)
+                Text("Estimated emitter", fontWeight = FontWeight.Bold)
                 Text(String.format(Locale.US, "%.6f, %.6f", e.lat, e.lon), fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
                 Text(
                     String.format(
-                        Locale.US, "%d rayos · residuo %.0f m · ángulo máx. %.0f° · base %.0f m",
+                        Locale.US, "%d rays · residual %.0f m · max angle %.0f° · baseline %.0f m",
                         e.n, e.rmsM, e.bestAngleDeg, e.baselineM,
                     ),
                     fontSize = 13.sp,
@@ -481,9 +481,9 @@ fun EstimateCard(data: SessionData, holder: MapHolder) {
                             holder.map?.controller?.animateTo(GeoPoint(e.lat, e.lon))
                         },
                         modifier = Modifier.weight(1f),
-                    ) { Text("Centrar en el mapa", fontSize = 12.sp) }
+                    ) { Text("Center on map", fontSize = 12.sp) }
                     OutlinedButton(onClick = { openInMaps(ctx, e.lat, e.lon) }, modifier = Modifier.weight(1f)) {
-                        Text("Abrir en mapas", fontSize = 12.sp)
+                        Text("Open in maps", fontSize = 12.sp)
                     }
                 }
             }
@@ -494,12 +494,12 @@ fun EstimateCard(data: SessionData, holder: MapHolder) {
 @Composable
 fun PointsList(vm: MainViewModel, data: SessionData) {
     var toDelete by remember { mutableStateOf<Long?>(null) }
-    if (data.points.isNotEmpty()) Text("Puntos de esta sesión", fontSize = 12.sp, color = Color.Gray)
+    if (data.points.isNotEmpty()) Text("Points in this session", fontSize = 12.sp, color = Color.Gray)
     data.points.forEachIndexed { i, p ->
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(
-                    "#${i + 1} · rumbo ${p.bearingTrue.roundToInt()}° · ${f1(p.powerDb)} dB · SNR ${p.snrDb?.roundToInt() ?: "?"}",
+                    "#${i + 1} · bearing ${p.bearingTrue.roundToInt()}° · ${f1(p.powerDb)} dB · SNR ${p.snrDb?.roundToInt() ?: "?"}",
                     fontSize = 14.sp,
                 )
                 Text(
@@ -515,16 +515,16 @@ fun PointsList(vm: MainViewModel, data: SessionData) {
     if (id != null) {
         AlertDialog(
             onDismissRequest = { toDelete = null },
-            title = { Text("¿Borrar este punto?") },
+            title = { Text("Delete this point?") },
             confirmButton = {
-                TextButton(onClick = { vm.deletePoint(id); toDelete = null }) { Text("Borrar") }
+                TextButton(onClick = { vm.deletePoint(id); toDelete = null }) { Text("Delete") }
             },
-            dismissButton = { TextButton(onClick = { toDelete = null }) { Text("Cancelar") } },
+            dismissButton = { TextButton(onClick = { toDelete = null }) { Text("Cancel") } },
         )
     }
 }
 
-// ------------------------------------------------------------------ pestaña Sesiones
+// ------------------------------------------------------------------ Sessions tab
 @Composable
 fun SessionsTab(vm: MainViewModel) {
     val ctx = LocalContext.current
@@ -534,12 +534,12 @@ fun SessionsTab(vm: MainViewModel) {
     var confirm by remember { mutableStateOf(false) }
     val cur = data.session
 
-    Text("Cada sesión guarda por punto: posición GPS, hora, frecuencia, potencia, SNR, ganancia y rumbo.", fontSize = 12.sp, color = Color.Gray)
+    Text("Each session stores, per point: GPS position, time, frequency, power, SNR, gain and bearing.", fontSize = 12.sp, color = Color.Gray)
     Box {
         OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth()) {
             Text(
                 if (cur != null) "#${cur.id} · ${String.format(Locale.US, "%.4f", cur.freqHz / 1e6)} MHz · ${data.points.size} pts"
-                else "Sin sesiones",
+                else "No sessions",
             )
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
@@ -558,50 +558,50 @@ fun SessionsTab(vm: MainViewModel) {
     }
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         OutlinedButton(onClick = { vm.newSession() }, modifier = Modifier.weight(1f)) {
-            Text("Nueva caza (frecuencia de Rastrear)", fontSize = 12.sp)
+            Text("New hunt (uses the Track frequency)", fontSize = 12.sp)
         }
         OutlinedButton(onClick = { confirm = true }, enabled = cur != null, modifier = Modifier.weight(1f)) {
-            Text("Borrar sesión", fontSize = 12.sp)
+            Text("Delete session", fontSize = 12.sp)
         }
     }
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Button(onClick = { vm.export(ctx, true) }, enabled = cur != null, modifier = Modifier.weight(1f)) { Text("Compartir CSV") }
-        Button(onClick = { vm.export(ctx, false) }, enabled = cur != null, modifier = Modifier.weight(1f)) { Text("Compartir GeoJSON") }
+        Button(onClick = { vm.export(ctx, true) }, enabled = cur != null, modifier = Modifier.weight(1f)) { Text("Share CSV") }
+        Button(onClick = { vm.export(ctx, false) }, enabled = cur != null, modifier = Modifier.weight(1f)) { Text("Share GeoJSON") }
     }
     if (confirm && cur != null) {
         AlertDialog(
             onDismissRequest = { confirm = false },
-            title = { Text("¿Borrar la sesión #${cur.id} y todos sus puntos?") },
+            title = { Text("Delete session #${cur.id} and all its points?") },
             confirmButton = {
-                TextButton(onClick = { vm.deleteSession(cur.id); confirm = false }) { Text("Borrar") }
+                TextButton(onClick = { vm.deleteSession(cur.id); confirm = false }) { Text("Delete") }
             },
-            dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancelar") } },
+            dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancel") } },
         )
     }
 }
 
-// ------------------------------------------------------------------ pestaña Ajustes
+// ------------------------------------------------------------------ Settings tab
 @Composable
 fun SettingsTab(vm: MainViewModel, holder: MapHolder) {
     val ctx = LocalContext.current
 
-    Text("Conexión con SDR driver (rtl_tcp)", fontWeight = FontWeight.Bold)
+    Text("SDR driver connection (rtl_tcp)", fontWeight = FontWeight.Bold)
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        NumField(vm, "sdr_host", "Dirección", Modifier.weight(1.5f), KeyboardType.Uri)
-        NumField(vm, "sdr_port", "Puerto", Modifier.weight(1f), KeyboardType.Number)
+        NumField(vm, "sdr_host", "Host", Modifier.weight(1.5f), KeyboardType.Uri)
+        NumField(vm, "sdr_port", "Port", Modifier.weight(1f), KeyboardType.Number)
     }
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        NumField(vm, "sdr_ppm", "Corrección (ppm)", Modifier.weight(1f))
-        NumField(vm, "sdr_settle", "Asentamiento (ms)", Modifier.weight(1f))
+        NumField(vm, "sdr_ppm", "Correction (ppm)", Modifier.weight(1f))
+        NumField(vm, "sdr_settle", "Settle time (ms)", Modifier.weight(1f))
     }
     Text(
-        "Asentamiento: tiempo que se descarta tras cambiar de frecuencia. Si en el escaneo aparecen " +
-            "emisoras fantasma del salto anterior, súbelo; si quieres barridos más rápidos, bájalo.",
+        "Settle time: how long data is discarded after retuning. If the scan shows ghost " +
+            "emitters from the previous hop, raise it; for faster sweeps, lower it.",
         fontSize = 12.sp,
         color = Color.Gray,
     )
 
-    Text("Montaje del móvil en la Yagi", fontWeight = FontWeight.Bold)
+    Text("Phone mounting on the Yagi", fontWeight = FontWeight.Bold)
     MountAxis.entries.forEach { a ->
         Row(
             Modifier.fillMaxWidth().clickable { vm.setField("mount_axis", a.name) },
@@ -611,57 +611,57 @@ fun SettingsTab(vm: MainViewModel, holder: MapHolder) {
             Text(a.label, fontSize = 13.sp)
         }
     }
-    NumField(vm, "heading_offset", "Corrección de rumbo (°, + horario)", Modifier.fillMaxWidth())
+    NumField(vm, "heading_offset", "Bearing offset (°, + clockwise)", Modifier.fillMaxWidth())
     Text(
-        "Si el móvil no queda exactamente alineado con el boom, apunta la Yagi a algo con rumbo conocido " +
-            "y pon aquí la diferencia (rumbo real − rumbo mostrado).",
+        "If the phone is not perfectly aligned with the boom, point the Yagi at something with a known " +
+            "bearing and enter the difference here (true bearing − displayed bearing).",
         fontSize = 12.sp,
         color = Color.Gray,
     )
-    SwitchRow("Teclas de volumen = registrar punto", vm.f("use_volume") == "true") { vm.setField("use_volume", it.toString()) }
-    SwitchRow("Mapa solo offline (sin descargar teselas)", vm.f("map_offline") == "true") { vm.setField("map_offline", it.toString()) }
+    SwitchRow("Volume keys = record point", vm.f("use_volume") == "true") { vm.setField("use_volume", it.toString()) }
+    SwitchRow("Offline-only map (no tile downloads)", vm.f("map_offline") == "true") { vm.setField("map_offline", it.toString()) }
 
-    Text("Mapa offline", fontWeight = FontWeight.Bold)
+    Text("Offline map", fontWeight = FontWeight.Bold)
     Text(
-        "Encuadra en el mapa la zona de trabajo y pulsa descargar. Las teselas quedan guardadas en el móvil. " +
-            "Tope: 2000 teselas (política de uso de OpenStreetMap).",
+        "Frame your work area on the map and tap download. Tiles are stored on the phone. " +
+            "Cap: 2000 tiles (OpenStreetMap usage policy).",
         fontSize = 12.sp,
         color = Color.Gray,
     )
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        NumField(vm, "dl_zmin", "Zoom mín.", Modifier.weight(1f), KeyboardType.Number)
-        NumField(vm, "dl_zmax", "Zoom máx.", Modifier.weight(1f), KeyboardType.Number)
+        NumField(vm, "dl_zmin", "Min zoom", Modifier.weight(1f), KeyboardType.Number)
+        NumField(vm, "dl_zmax", "Max zoom", Modifier.weight(1f), KeyboardType.Number)
     }
     Button(onClick = { downloadArea(ctx, holder, vm) }, modifier = Modifier.fillMaxWidth()) {
-        Text("Descargar la zona visible del mapa")
+        Text("Download the visible map area")
     }
 }
 
 private fun downloadArea(ctx: Context, holder: MapHolder, vm: MainViewModel) {
     val map = holder.map
     if (map == null) {
-        vm.postMessage("El mapa aún no está listo")
+        vm.postMessage("The map is not ready yet")
         return
     }
     val zmin = vm.f("dl_zmin").toIntOrNull()
     val zmax = vm.f("dl_zmax").toIntOrNull()
     if (zmin == null || zmax == null || zmin < 1 || zmax > 18 || zmin > zmax) {
-        vm.postMessage("Zoom no válido (1–18, mínimo ≤ máximo)")
+        vm.postMessage("Invalid zoom (1–18, min ≤ max)")
         return
     }
     val box = map.boundingBox
     val cm = CacheManager(map)
     val total = cm.possibleTilesInArea(box, zmin, zmax)
     if (total > 2000) {
-        vm.postMessage("Demasiadas teselas ($total > 2000): acerca el mapa o baja el zoom máximo")
+        vm.postMessage("Too many tiles ($total > 2000): zoom the map in or lower the max zoom")
         return
     }
-    vm.postMessage("Descargando $total teselas…")
+    vm.postMessage("Downloading $total tiles…")
     cm.downloadAreaAsync(
         ctx, box, zmin, zmax,
         object : CacheManager.CacheManagerCallback {
-            override fun onTaskComplete() = vm.postMessage("Mapa descargado")
-            override fun onTaskFailed(errors: Int) = vm.postMessage("Descarga terminada con $errors errores")
+            override fun onTaskComplete() = vm.postMessage("Map downloaded")
+            override fun onTaskFailed(errors: Int) = vm.postMessage("Download finished with $errors errors")
             override fun updateProgress(progress: Int, currentZoomLevel: Int, zoomMin: Int, zoomMax: Int) {}
             override fun downloadStarted() {}
             override fun setPossibleTilesInArea(total: Int) {}

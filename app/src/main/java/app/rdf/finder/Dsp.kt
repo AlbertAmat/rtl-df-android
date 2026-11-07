@@ -7,12 +7,12 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
-/** Procesado de señal: espectro de potencia promediado y estadísticos auxiliares. */
+/** Signal processing: averaged power spectrum and helper statistics. */
 object Dsp {
     const val NFFT = 1024
     private const val LOG2 = 10
 
-    // Ventana de Hann idéntica a numpy.hanning(NFFT)
+    // Hann window identical to numpy.hanning(NFFT)
     private val win = DoubleArray(NFFT) { 0.5 - 0.5 * cos(2.0 * PI * it / (NFFT - 1)) }
     private val wsum2: Double = win.sum().let { it * it }
     private val cosT = DoubleArray(NFFT / 2) { cos(2.0 * PI * it / NFFT) }
@@ -54,12 +54,12 @@ object Dsp {
     }
 
     /**
-     * Espectro de potencia lineal, centrado (bin NFFT/2 = frecuencia central), promediando
-     * nSamples/NFFT bloques. iq = I,Q intercalados en [-1, 1]. Un tono de amplitud 1 da potencia 1.
+     * Linear power spectrum, centered (bin NFFT/2 = center frequency), averaging
+     * nSamples/NFFT blocks. iq = interleaved I,Q in [-1, 1]. A tone of amplitude 1 gives power 1.
      */
     fun psd(iq: FloatArray, nSamples: Int): DoubleArray {
         val blocks = nSamples / NFFT
-        require(blocks > 0) { "Muy pocas muestras" }
+        require(blocks > 0) { "Too few samples" }
         val acc = DoubleArray(NFFT)
         val re = DoubleArray(NFFT)
         val im = DoubleArray(NFFT)
@@ -85,7 +85,7 @@ object Dsp {
         for (i in p.indices) p[i] = db(p[i])
     }
 
-    /** Mediana (como numpy.median). */
+    /** Median (like numpy.median). */
     fun median(values: DoubleArray): Double {
         if (values.isEmpty()) return Double.NaN
         val s = values.copyOf()
@@ -94,7 +94,7 @@ object Dsp {
         return if (n % 2 == 1) s[n / 2] else (s[n / 2 - 1] + s[n / 2]) / 2.0
     }
 
-    /** Percentil con interpolación lineal (como numpy.percentile). */
+    /** Percentile with linear interpolation (like numpy.percentile). */
     fun percentile(values: List<Double>, p: Double): Double {
         if (values.isEmpty()) return Double.NaN
         val s = values.sorted()

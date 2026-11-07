@@ -12,23 +12,23 @@ data class SessionRow(val id: Long, val freqHz: Double, val created: String, val
 data class PointRow(
     val id: Long,
     val sessionId: Long,
-    val ts: String,          // hora UTC (del GPS si hay)
-    val tsSrc: String,       // "gps" o "system"
+    val ts: String,          // UTC time (from GPS if available)
+    val tsSrc: String,       // "gps" or "system"
     val lat: Double,
     val lon: Double,
     val alt: Double?,
     val accM: Double?,
     val freqHz: Double,
-    val powerDb: Double,     // dBFS relativos (sin calibrar)
+    val powerDb: Double,     // relative dBFS (uncalibrated)
     val snrDb: Double?,
     val gain: Double?,
-    val bearingMag: Double,  // rumbo magnético medido (sensor o escrito)
+    val bearingMag: Double,  // measured magnetic bearing (sensor or typed)
     val declination: Double,
-    val offset: Double,      // corrección de montaje
+    val offset: Double,      // mounting offset
     val bearingTrue: Double, // = bearingMag + declination + offset
 )
 
-/** Persistencia: sesiones de rastreo (una por frecuencia) y puntos medidos. */
+/** Persistence: tracking sessions (one per frequency) and measured points. */
 class RdfDb(ctx: Context) : SQLiteOpenHelper(ctx, "rdf.db", null, 1) {
     override fun onConfigure(db: SQLiteDatabase) {
         db.setForeignKeyConstraintsEnabled(true)
@@ -114,7 +114,7 @@ class RdfDb(ctx: Context) : SQLiteOpenHelper(ctx, "rdf.db", null, 1) {
         return out
     }
 
-    /** Borra un punto y devuelve el id de su sesión (o null si no existía). */
+    /** Deletes a point and returns its session id (or null if it did not exist). */
     fun deletePoint(id: Long): Long? {
         val sid = readableDatabase.rawQuery("SELECT session_id FROM points WHERE id=?", arrayOf(id.toString())).use { c ->
             if (c.moveToFirst()) c.getLong(0) else null

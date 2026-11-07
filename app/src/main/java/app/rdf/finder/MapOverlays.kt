@@ -12,7 +12,7 @@ import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
 import kotlin.math.max
 
-/** Dibujo en el mapa: puntos numerados, rayos, emisor estimado y posición propia. */
+/** Map drawing: numbered points, rays, estimated emitter and own position. */
 object MapOverlays {
     private val ORANGE = Color.rgb(255, 152, 0)
 
@@ -35,7 +35,7 @@ object MapOverlays {
                     position = GeoPoint(p.lat, p.lon)
                     setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
                     icon = dot(ctx, ORANGE, 28, "${i + 1}")
-                    title = "#${i + 1} · rumbo ${"%.0f".format(p.bearingTrue)}° · ${"%.1f".format(p.powerDb)} dB"
+                    title = "#${i + 1} · bearing ${"%.0f".format(p.bearingTrue)}° · ${"%.1f".format(p.powerDb)} dB"
                 },
             )
         }
@@ -46,7 +46,7 @@ object MapOverlays {
                     position = GeoPoint(est.lat, est.lon)
                     setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
                     icon = dot(ctx, Color.rgb(229, 57, 53), 32, null)
-                    title = "Emisor estimado"
+                    title = "Estimated emitter"
                 },
             )
         }
@@ -57,7 +57,7 @@ object MapOverlays {
                     position = GeoPoint(fix.lat, fix.lon)
                     setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
                     icon = dot(ctx, Color.rgb(30, 144, 255), 22, null)
-                    title = "Tú"
+                    title = "You"
                 },
             )
         }

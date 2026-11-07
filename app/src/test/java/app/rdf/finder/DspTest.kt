@@ -23,7 +23,7 @@ class DspTest {
         val p = Dsp.psd(tone(100, 0.5, 8), Dsp.NFFT * 8)
         val peak = p.indices.maxByOrNull { p[it] }!!
         assertEquals(Dsp.NFFT / 2 + 100, peak)
-        assertEquals(0.25, p[peak], 1e-3) // amplitud 0.5 → potencia 0.25 (−6 dB)
+        assertEquals(0.25, p[peak], 1e-3) // amplitude 0.5 → power 0.25 (−6 dB)
     }
 
     @Test

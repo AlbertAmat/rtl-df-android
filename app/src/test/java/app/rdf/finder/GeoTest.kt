@@ -40,25 +40,25 @@ class GeoTest {
     fun parallelRaysRejected() {
         try {
             Geo.estimate(listOf(Geo.Ray(40.40, -3.70, 0.0), Geo.Ray(40.41, -3.70, 1.0)))
-            fail("debía rechazar rayos paralelos")
+            fail("should have rejected parallel rays")
         } catch (e: Geo.GeoException) {
-            // esperado
+            // expected
         }
     }
 
     @Test
     fun behindWarning() {
         val e = Geo.estimate(listOf(Geo.Ray(40.40, -3.72, 90.0), Geo.Ray(40.43, -3.72, 225.0)))
-        assertTrue(e.warnings.any { it.contains("detrás") })
+        assertTrue(e.warnings.any { it.contains("behind") })
     }
 
     @Test
     fun needsTwo() {
         try {
             Geo.estimate(listOf(Geo.Ray(40.40, -3.72, 10.0)))
-            fail("debía exigir 2 puntos")
+            fail("should have required 2 points")
         } catch (e: Geo.GeoException) {
-            // esperado
+            // expected
         }
     }
 

@@ -1,55 +1,55 @@
-# RDF · Radiogoniometría en Android (Kotlin)
+# rtl-df-android · Radio direction finding for Android (Kotlin)
 
-App Android para localizar emisores con una Yagi: el móvil va montado en la antena y hace de pantalla, GPS y brújula; el RTL-SDR se conecta por USB OTG y lo sirve la app **SDR driver** (`rtl_tcp` en `127.0.0.1:1234`).
+Android app for locating transmitters with a Yagi antenna. The phone is mounted on the Yagi and acts as screen, GPS and compass; the RTL-SDR connects over USB OTG and is served by the **SDR driver** app (`rtl_tcp` on `127.0.0.1:1234`).
 
-**Flujo**
-1. **Escanear**: barre 400–470 MHz (rango de la Yagi Ailunce AY02) el tiempo que elijas y lista las emisoras con nivel, SNR y % de actividad. Atajos: Yagi completa, PMR 446, 70 cm, ISM 433.
-2. **Rastrear**: eliges una emisora de la lista (o escribes la frecuencia). Potencia en vivo con número, gráfica y **tono de audio** (más agudo = más señal).
-3. **Registrar punto** (botón o **tecla de volumen**): guarda posición GPS, hora (del GPS), frecuencia, potencia, SNR, ganancia y rumbo. El rumbo sale de la brújula del móvil, con la declinación magnética calculada sola a partir del GPS.
-4. Con 2 o más puntos calcula la posición del emisor (intersección / mínimos cuadrados) y la dibuja en el mapa con los rayos.
+**Workflow**
+1. **Scan**: sweeps 400–470 MHz (the range of the Ailunce AY02 Yagi) for the duration you choose and lists the active emitters with level, SNR and activity %. Presets: full Yagi range, PMR 446, 70 cm, ISM 433.
+2. **Track**: pick an emitter from the list (or type a frequency). Live power as a number, a graph and an **audio tone** (higher pitch = stronger signal).
+3. **Record point** (button or **volume key**): stores GPS position, time (GPS time), frequency, power, SNR, gain and bearing. The bearing comes from the phone compass, with magnetic declination computed automatically from the GPS position.
+4. With 2 or more points it computes the emitter position (intersection / least squares) and draws it on the map together with the rays.
 
-## Compilar e instalar
-1. Android Studio reciente (Ladybug o superior). **File → Open** y elige esta carpeta; espera al *Sync* (descarga dependencias, necesita internet una vez).
-2. Si Studio propone actualizar AGP/Kotlin/Compose, puedes aceptar; las versiones fijadas son un conjunto compatible conocido (AGP 8.7.3, Gradle 8.9, Kotlin 2.0.21).
-3. Conecta el móvil con depuración USB y pulsa **Run**, o **Build → Build APK(s)**.
+## Build and install
+1. Recent Android Studio (Ladybug or newer). **File → Open** and pick this folder; wait for the Gradle *Sync* (it downloads dependencies, so internet is needed once).
+2. If Studio offers to upgrade AGP/Kotlin/Compose you can accept; the pinned versions are a known compatible set (AGP 8.7.3, Gradle 8.9, Kotlin 2.0.21).
+3. Connect the phone with USB debugging and press **Run**, or **Build → Build APK(s)**.
 
-## Primer uso
-1. Abre **SDR driver**, conecta el RTL-SDR (acepta el permiso USB) y pulsa **Start** (dirección `127.0.0.1`, puerto `1234`).
-2. Abre RDF y concede el permiso de ubicación. En **Rastrear** pulsa **Conectar SDR** (también hay un botón para abrir SDR driver).
-3. Ve a **Escanear** → **Iniciar escaneo**.
+## First use
+1. Open **SDR driver**, plug in the RTL-SDR (accept the USB permission) and tap **Start** (host `127.0.0.1`, port `1234`).
+2. Open this app and grant the location permission. In **Track** tap **Connect SDR** (there is also a button to open SDR driver).
+3. Go to **Scan** → **Start scan**.
 
-Consejos: activa el **modo avión** en campo (el GPS sigue funcionando y la radio del móvil no interfiere con el RTL-SDR), y deja la pantalla encendida: la app la mantiene activa porque la captura se para si se apaga.
+Tips: enable **airplane mode** in the field (GPS keeps working and the phone radios will not interfere with the RTL-SDR), and keep the screen on: the app holds it awake because capture stops if the screen turns off.
 
-## Montaje del móvil en la Yagi
-- Pon el móvil **plano** sobre el boom con el borde superior apuntando hacia delante (es la opción por defecto). Si lo montas de otra forma, elígelo en **Ajustes → Montaje**.
-- Soporte 3D en **PETG/PLA, sin metal ni imanes** (tornillos de acero, soportes magnéticos…): perturban la brújula. Aléjalo del dongle y del boom todo lo que puedas.
-- Calibra la brújula moviendo el móvil en forma de 8 con el montaje puesto (la pestaña Rastrear muestra la calibración).
-- **Corrección de rumbo**: apunta la Yagi a algo con rumbo conocido y pon la diferencia en Ajustes (compensa que el móvil no quede perfectamente alineado).
-- Las **teclas de volumen** registran el punto sin tocar la pantalla; la app promedia el rumbo de los 2,5 s anteriores a la pulsación (pulsar mueve la antena).
+## Mounting the phone on the Yagi
+- Place the phone **flat** on the boom with its top edge pointing forward (the default). If you mount it differently, choose the axis in **Settings → Phone mounting**.
+- Print the bracket in **PETG/PLA with no metal or magnets** (steel screws, magnetic mounts…): they disturb the compass. Keep it as far from the dongle and the boom as you can.
+- Calibrate the compass by moving the phone in a figure 8 with the mount in place (the Track tab shows the calibration level).
+- **Bearing offset**: point the Yagi at something with a known bearing and enter the difference in Settings (it compensates for the phone not being perfectly aligned).
+- **Volume keys** record the point without touching the screen; the app averages the bearing over the 2.5 s before the key press (pressing moves the antenna).
 
-## Mapa offline
-Encuadra la zona de trabajo en el mapa y, en **Ajustes → Mapa offline**, pulsa **Descargar la zona visible** (zoom 12–16 por defecto, tope de 2000 teselas por la política de uso de OpenStreetMap). Luego activa **Mapa solo offline**. Las teselas se guardan en el móvil.
+## Offline map
+Frame your work area on the map and, in **Settings → Offline map**, tap **Download the visible map area** (zoom 12–16 by default, capped at 2000 tiles by the OpenStreetMap usage policy). Then enable **Offline-only map**. Tiles are stored on the phone.
 
-## Ajustes útiles
-- **Asentamiento (ms)**: tiempo que se descarta tras cambiar de frecuencia, necesario porque `rtl_tcp` emite sin parar. Con 80 ms un barrido de 70 MHz tarda unos 8 s. Si aparecen emisoras fantasma del salto anterior, súbelo; si quieres ir más rápido, bájalo.
-- **ppm**: corrección de frecuencia del RTL-SDR (los baratos se desvían decenas de kHz).
-- Ganancia vacía o `auto` = AGC del tuner. En rastreo empieza con ~30 dB y bájala si sale «Señal saturada». Las potencias son dBFS relativos (sin calibrar): sirven para comparar entre puntos con la misma ganancia.
+## Useful settings
+- **Settle time (ms)**: time discarded after retuning, needed because `rtl_tcp` streams continuously. At 80 ms a 70 MHz sweep takes about 8 s. If ghost emitters from the previous hop appear, raise it; for faster sweeps, lower it.
+- **ppm**: RTL-SDR frequency correction (cheap dongles drift by tens of kHz).
+- Empty gain or `auto` = tuner AGC. When tracking, start around 30 dB and lower it if "Signal clipping" shows up. Powers are relative dBFS (uncalibrated): good for comparing points taken with the same gain.
 
-## Estado de verificación
-- La lógica (cliente `rtl_tcp`, DSP, escáner, rastreador, trigonometría) se compiló con Kotlin 2.0.21 y pasa 11 pruebas JVM contra un servidor `rtl_tcp` falso (`app/src/test`): detecta portadoras a ±3 kHz, mide SNR y localiza el emisor con error de metros en datos sintéticos.
-- **La parte Android (interfaz Compose, sensores, GPS, osmdroid, base de datos) no se ha podido compilar ni probar en el entorno donde se generó** (sin Android SDK ni acceso a Maven). Si Gradle da algún error de compilación o la app falla en el móvil, pásame el mensaje y lo corrijo.
-- No está probada con un RTL-SDR real: el tiempo de asentamiento y el comportamiento de SDR driver pueden requerir ajustes.
+## Verification status
+- The core logic (`rtl_tcp` client, DSP, scanner, tracker, geometry) compiles with Kotlin 2.0.21 and passes 11 JVM tests against a fake `rtl_tcp` server (`app/src/test`): it detects carriers to within ±3 kHz, measures SNR and locates the emitter to within metres on synthetic data.
+- **The Android part (Compose UI, sensors, GPS, osmdroid, database) has not been compiled or tested yet** (it was generated in an environment with no Android SDK or Maven access). If Gradle reports compile errors or the app misbehaves on a phone, those are the first things to fix.
+- It has not been tested with a real RTL-SDR: the settle time and the behaviour of SDR driver may need tuning.
 
-## Estructura
-| Archivo | Qué hace |
+## Structure
+| File | Purpose |
 |---|---|
-| `RtlTcp.kt`, `Sdr.kt` | protocolo rtl_tcp, configuración, sintonía y captura sin datos viejos |
-| `Dsp.kt` | FFT, espectro promediado, mediana, percentiles |
-| `Scanner.kt` | barrido por saltos, máximos, % de actividad, agrupación en emisoras |
-| `Tracker.kt` | potencia y SNR en vivo; potencia del punto = percentil 90 de 3 s |
-| `Geo.kt` | intersección / mínimos cuadrados de rumbos |
-| `Sensors.kt` | GPS (LocationManager), brújula (vector de rotación), declinación |
-| `Db.kt`, `Export.kt` | SQLite, CSV y GeoJSON compartibles |
-| `MainViewModel.kt`, `Ui.kt`, `MapOverlays.kt`, `MainActivity.kt` | estado, interfaz Compose, mapa, teclas de volumen |
+| `RtlTcp.kt`, `Sdr.kt` | rtl_tcp protocol, configuration, tuning and capture without stale data |
+| `Dsp.kt` | FFT, averaged spectrum, median, percentiles |
+| `Scanner.kt` | hop-based sweep, maxima, activity %, grouping into emitters |
+| `Tracker.kt` | live power and SNR; point power = 90th percentile over 3 s |
+| `Geo.kt` | intersection / least squares of bearings |
+| `Sensors.kt` | GPS (LocationManager), compass (rotation vector), declination |
+| `Db.kt`, `Export.kt` | SQLite, shareable CSV and GeoJSON |
+| `MainViewModel.kt`, `Ui.kt`, `MapOverlays.kt`, `MainActivity.kt` | state, Compose UI, map, volume keys |
 
-Pruebas JVM: `./gradlew test` (o *Run tests* en Android Studio).
+JVM tests: `./gradlew test` (or *Run tests* in Android Studio).

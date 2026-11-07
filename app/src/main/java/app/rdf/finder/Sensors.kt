@@ -25,12 +25,12 @@ data class GpsFix(
     val lon: Double,
     val alt: Double,
     val accM: Float?,
-    val timeMs: Long,        // hora UTC del GPS
+    val timeMs: Long,        // GPS UTC time
     val sats: Int?,
-    val elapsedMs: Long,     // SystemClock.elapsedRealtime() al recibirlo (para medir su antigüedad)
+    val elapsedMs: Long,     // SystemClock.elapsedRealtime() on receipt (to measure its age)
 )
 
-/** GPS del propio móvil (sin Play Services: funciona sin datos ni red). */
+/** The phone's own GPS (no Play Services: works without data or network). */
 class GpsProvider(ctx: Context) : LocationListener {
     private val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as LocationManager
     private val _fix = MutableStateFlow<GpsFix?>(null)
@@ -46,7 +46,7 @@ class GpsProvider(ctx: Context) : LocationListener {
         } catch (e: SecurityException) {
             started = false
         } catch (e: IllegalArgumentException) {
-            started = false // el móvil no tiene proveedor GPS
+            started = false // the phone has no GPS provider
         }
     }
 
@@ -56,7 +56,7 @@ class GpsProvider(ctx: Context) : LocationListener {
         started = false
     }
 
-    /** Fix válido = recibido hace menos de 5 s. */
+    /** Valid fix = received less than 5 s ago. */
     fun isValid(): Boolean {
         val f = _fix.value ?: return false
         return SystemClock.elapsedRealtime() - f.elapsedMs < 5000
@@ -74,7 +74,7 @@ class GpsProvider(ctx: Context) : LocationListener {
         )
     }
 
-    // Necesarios en Android 8-10, donde estos métodos aún no son «default» de la interfaz
+    // Required on Android 8-10, where these interface methods are not yet "default"
     @Deprecated("Deprecated in Java")
     @Suppress("OVERRIDE_DEPRECATION")
     override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {
@@ -84,26 +84,26 @@ class GpsProvider(ctx: Context) : LocationListener {
     override fun onProviderDisabled(provider: String) {}
 
     companion object {
-        /** Declinación magnética (grados, Este positivo) para la posición dada. */
+        /** Magnetic declination (degrees, east positive) for the given position. */
         fun declination(f: GpsFix): Double =
             GeomagneticField(f.lat.toFloat(), f.lon.toFloat(), f.alt.toFloat(), System.currentTimeMillis())
                 .declination.toDouble()
     }
 }
 
-/** Qué cara/borde del móvil apunta en la misma dirección que la Yagi. */
+/** Which face/edge of the phone points in the same direction as the Yagi. */
 enum class MountAxis(val label: String, val vx: Float, val vy: Float, val vz: Float) {
-    TOP("Borde superior del móvil (+Y) — móvil plano, pantalla arriba", 0f, 1f, 0f),
-    BOTTOM("Borde inferior (−Y)", 0f, -1f, 0f),
-    RIGHT("Borde derecho (+X)", 1f, 0f, 0f),
-    LEFT("Borde izquierdo (−X)", -1f, 0f, 0f),
-    BACK("Cara trasera (−Z) — móvil vertical, pantalla hacia ti", 0f, 0f, -1f),
+    TOP("Top edge of the phone (+Y) — phone flat, screen up", 0f, 1f, 0f),
+    BOTTOM("Bottom edge (−Y)", 0f, -1f, 0f),
+    RIGHT("Right edge (+X)", 1f, 0f, 0f),
+    LEFT("Left edge (−X)", -1f, 0f, 0f),
+    BACK("Back face (−Z) — phone upright, screen facing you", 0f, 0f, -1f),
 }
 
 /**
- * Rumbo magnético hacia donde apunta la Yagi, a partir del vector de rotación (magnetómetro +
- * giroscopio + acelerómetro). Guarda un historial para promediar justo ANTES de pulsar «registrar»
- * (el pulsar mueve la antena).
+ * Magnetic bearing the Yagi points to, derived from the rotation vector (magnetometer +
+ * gyroscope + accelerometer). Keeps a history so it can average right BEFORE "record" is pressed
+ * (pressing moves the antenna).
  */
 class HeadingProvider(ctx: Context) : SensorEventListener {
     private val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as SensorManager
@@ -122,7 +122,7 @@ class HeadingProvider(ctx: Context) : SensorEventListener {
     private val _accuracy = MutableStateFlow(SensorManager.SENSOR_STATUS_UNRELIABLE)
     val accuracy: StateFlow<Int> = _accuracy
 
-    /** Último rumbo magnético suavizado (0-360) o null si apunta casi vertical / sin datos. */
+    /** Latest smoothed magnetic bearing (0-360), or null if pointing almost vertically / no data. */
     @Volatile var magneticHeading: Double? = null
         private set
 
@@ -141,7 +141,7 @@ class HeadingProvider(ctx: Context) : SensorEventListener {
     override fun onSensorChanged(e: SensorEvent) {
         SensorManager.getRotationMatrixFromVector(rot, e.values)
         val a = axis
-        // rot: dispositivo → mundo (X = este, Y = norte, Z = arriba)
+        // rot: device → world (X = east, Y = north, Z = up)
         val wx = rot[0] * a.vx + rot[1] * a.vy + rot[2] * a.vz
         val wy = rot[3] * a.vx + rot[4] * a.vy + rot[5] * a.vz
         if (hypot(wx, wy) < 0.3f) {
@@ -149,7 +149,7 @@ class HeadingProvider(ctx: Context) : SensorEventListener {
             return
         }
         val h = atan2(wx.toDouble(), wy.toDouble())
-        // Media móvil circular (evita el salto 359°→0°)
+        // Circular moving average (avoids the 359°→0° jump)
         if (!init) {
             sinAvg = sin(h); cosAvg = cos(h); init = true
         } else {
@@ -169,7 +169,7 @@ class HeadingProvider(ctx: Context) : SensorEventListener {
         _accuracy.value = accuracy
     }
 
-    /** Rumbo magnético medio entre hace [fromAgoMs] y hace [toAgoMs]; si no hay datos, el último. */
+    /** Mean magnetic bearing between [fromAgoMs] and [toAgoMs] ago; the latest one if there is no data. */
     fun meanHeading(fromAgoMs: Long = 2500, toAgoMs: Long = 500): Double? {
         val now = SystemClock.elapsedRealtime()
         var s = 0.0

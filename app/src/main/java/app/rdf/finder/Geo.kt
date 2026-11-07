@@ -10,11 +10,11 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * Posición del emisor a partir de rumbos medidos desde varios puntos.
+ * Emitter position from bearings measured at several points.
  *
- * Cada medida es un rayo (lat, lon, rumbo verdadero en grados desde el norte, sentido horario).
- * Con 2 rayos es la intersección exacta; con más, el punto que minimiza la suma de distancias
- * perpendiculares al cuadrado (mínimos cuadrados). Plano local: válido para pocos km.
+ * Each measurement is a ray (lat, lon, true bearing in degrees from north, clockwise).
+ * With 2 rays it is the exact intersection; with more, the point minimizing the sum of squared
+ * perpendicular distances (least squares). Local plane: valid for a few km.
  */
 object Geo {
     private const val R_EARTH = 6371008.8
@@ -46,7 +46,7 @@ object Geo {
         return lat to lon
     }
 
-    /** Rumbo inicial (grados, 0 = N) de (lat1, lon1) hacia (lat2, lon2). */
+    /** Initial bearing (degrees, 0 = N) from (lat1, lon1) to (lat2, lon2). */
     fun initialBearing(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
         val p1 = Math.toRadians(lat1)
         val p2 = Math.toRadians(lat2)
@@ -56,7 +56,7 @@ object Geo {
         return (Math.toDegrees(atan2(y, x)) + 360.0) % 360.0
     }
 
-    /** Punto a distMetros de (lat, lon) siguiendo el rumbo dado (aprox. plana, para dibujar rayos). */
+    /** Point distMetros away from (lat, lon) along the given bearing (flat approximation, for drawing rays). */
     fun destination(lat: Double, lon: Double, bearingDeg: Double, distM: Double): Pair<Double, Double> {
         val t = Math.toRadians(bearingDeg)
         val p = Math.toRadians(lat)
@@ -64,10 +64,10 @@ object Geo {
             (lon + Math.toDegrees(distM * sin(t) / (R_EARTH * cos(p))))
     }
 
-    /** Lanza [GeoException] si hay menos de 2 rayos o si son casi paralelos. */
+    /** Throws [GeoException] if there are fewer than 2 rays or they are nearly parallel. */
     fun estimate(rays: List<Ray>, minSepDeg: Double = 5.0): Estimate {
         val n = rays.size
-        if (n < 2) throw GeoException("Hacen falta al menos 2 puntos")
+        if (n < 2) throw GeoException("At least 2 points are needed")
 
         val lat0 = rays.sumOf { it.lat } / n
         val lon0 = rays.sumOf { it.lon } / n
@@ -83,7 +83,7 @@ object Geo {
             val th = Math.toRadians(r.bearingDeg)
             val dx = sin(th)
             val dy = cos(th)
-            // Proyector sobre la normal al rayo: P = I - d d^T
+            // Projector onto the normal of the ray: P = I - d d^T
             val a = 1 - dx * dx
             val b = -dx * dy
             val c = 1 - dy * dy
@@ -95,11 +95,11 @@ object Geo {
             loc.add(doubleArrayOf(px, py, dx, dy))
         }
 
-        // det = suma de sen^2(ángulo entre cada par de rayos): mide la calidad de la geometría
+        // det = sum of sin^2(angle between each pair of rays): measures geometry quality
         val det = aSum * cSum - bSum * bSum
         val s = sin(Math.toRadians(minSepDeg))
         if (det < s * s) {
-            throw GeoException("Los rumbos son casi paralelos: muévete a otro sitio para que formen más ángulo")
+            throw GeoException("The bearings are nearly parallel: move to another spot so they form a wider angle")
         }
 
         val x = (cSum * bx - bSum * by) / det
@@ -110,8 +110,8 @@ object Geo {
         for (l in loc) {
             val rx = x - l[0]
             val ry = y - l[1]
-            val t = rx * l[2] + ry * l[3]   // distancia a lo largo del rayo (<0: queda detrás)
-            val perp = rx * l[3] - ry * l[2] // distancia perpendicular
+            val t = rx * l[2] + ry * l[3]   // distance along the ray (<0: behind it)
+            val perp = rx * l[3] - ry * l[2] // perpendicular distance
             sq += perp * perp
             per.add(RayStat(t, perp))
         }
@@ -128,9 +128,9 @@ object Geo {
         }
 
         val warnings = ArrayList<String>()
-        if (per.any { it.rangeM < 0 }) warnings.add("La estimación queda detrás de algún rayo: revisa los rumbos")
-        if (bestAngle < 20) warnings.add("Geometría débil (menos de 20° entre rumbos): el error puede ser grande")
-        if (baseline < 30) warnings.add("Los puntos están muy juntos (menos de 30 m)")
+        if (per.any { it.rangeM < 0 }) warnings.add("The estimate lies behind a ray: check the bearings")
+        if (bestAngle < 20) warnings.add("Weak geometry (less than 20° between bearings): the error may be large")
+        if (baseline < 30) warnings.add("The points are very close together (less than 30 m)")
 
         val (lat, lon) = toGeo(x, y, lat0, lon0)
         return Estimate(lat, lon, n, rms, bestAngle, baseline, per, warnings)
