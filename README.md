@@ -22,7 +22,7 @@ Tips: enable **airplane mode** in the field (GPS keeps working and the phone rad
 
 ## Mounting the phone on the Yagi
 - Place the phone **flat** on the boom with its top edge pointing forward (the default). If you mount it differently, choose the axis in **Settings → Phone mounting**.
-- Print the bracket in **PETG/PLA with no metal or magnets** (steel screws, magnetic mounts…): they disturb the compass. Keep it as far from the dongle and the boom as you can.
+- A parametric printable mount is in [`hardware/`](hardware/README.md). Print it in **PETG/PLA with no metal or magnets** (steel screws, magnetic mounts…): they disturb the compass. Keep it as far from the dongle and the boom as you can.
 - Calibrate the compass by moving the phone in a figure 8 with the mount in place (the Track tab shows the calibration level).
 - **Bearing offset**: point the Yagi at something with a known bearing and enter the difference in Settings (it compensates for the phone not being perfectly aligned).
 - **Volume keys** record the point without touching the screen; the app averages the bearing over the 2.5 s before the key press (pressing moves the antenna).
