@@ -15,8 +15,12 @@ Android app for locating transmitters with a Yagi antenna. The phone is mounted 
    - **Listen**: **▶ LISTEN** demodulates the tracked frequency (NFM for walkie-talkies and amateur radio, AM for airband) and plays it on the phone speaker. The squelch opens on the measured SNR; set its threshold and the volume next to the button.
    - **Sweep assist**: swing the Yagi through a full turn and the app bins power by compass heading and shows the strongest direction (`PEAK 130° true · +9 dB over average`). **RECORD FIX AT PEAK** stores a fix with that bearing instead of the instantaneous compass reading. It only enables once the lobe is clear (≥ 4 dB above the average direction and ≥ 60° of heading covered); clipped samples are ignored.
    - **Polar plot**: next to the signal reading, a north-up plot of the power seen at each heading, with the antenna needle (amber) and the peak (green).
+   - **Aim cue**: the Track tab shows `◀ TURN LEFT 23°` / `TURN RIGHT 12° ▶` / `● ON TARGET` toward the peak. In **Settings** choose **None, Haptic or Sound**: pulses speed up as you approach (one short = left, two short = right, one long = on target).
+   - **Last heard and peak hold**: for push-to-talk transmitters the panel shows how long ago the signal was last above the squelch, and the last reliable peak is kept for 5 minutes so you can keep aiming between transmissions (it is cleared when you record a fix).
+   - **Carrier drift follow**: the tracker re-centres on the carrier when a persistent offset of 1.5 kHz or more is measured (up to ±25 kHz), so cheap dongles don't lose the channel. Switch in Settings.
+   - **Auto-record** (off by default, Settings): records a fix by itself once the antenna has been steady on a reliable peak for ~2 s and you are at least 20 m from the previous auto fix.
 3. **Record fix** (button or **volume key**): stores GPS position, time (GPS time), frequency, power, SNR, gain and bearing. The bearing comes from the phone compass, with magnetic declination computed automatically from the GPS position.
-4. With 2 or more points it computes the emitter position (weighted least squares: bearings with higher SNR and better GPS count more) and draws it on the map with the rays and a **95% confidence ellipse**. With 4+ points, a bearing that clearly disagrees (reflection, wrong signal) is left out automatically and drawn dashed grey.
+4. After each fix the **Next spot** card (and a green marker on the map) suggests where to walk so the next bearing crosses the others at a wide angle. With 2 or more points it computes the emitter position (weighted least squares: bearings with higher SNR and better GPS count more) and draws it on the map with the rays and a **95% confidence ellipse**. With 4+ points, a bearing that clearly disagrees (reflection, wrong signal) is left out automatically and drawn dashed grey.
 
 ## Screenshots
 
@@ -93,7 +97,7 @@ In the app, set **Settings → SDR driver connection → Host** to `10.0.2.2` (t
 
 ## Known limitations
 - Listening is mono NFM/AM only (no wide FM, no digital voice such as DMR or P25), and you are responsible for complying with local rules on monitoring radio communications.
-- No automatic SDR reconnection: if the socket drops, tap **CONNECT SDR** again.
+- If the `rtl_tcp` socket drops the app reconnects by itself (retrying every 1–5 s) and resumes tracking; tap **DISCONNECT SDR** to stop retrying.
 - The compass "not calibrated" warning relies on the sensor's reported accuracy, which some phones report poorly for the rotation vector.
 - Offline map downloads show start and end messages but no progress bar.
 
@@ -105,6 +109,7 @@ In the app, set **Settings → SDR driver connection → Host** to `10.0.2.2` (t
 | `Scanner.kt` | hop-based sweep, maxima, activity %, grouping into emitters |
 | `Tracker.kt` | live power and SNR; point power = 90th percentile over 3 s |
 | `PeakFinder.kt` | sweep assist: power vs. heading bins, main-lobe bearing, reliability |
+| `AimAssist.kt`, `AimCue.kt` | aim error and cues (haptic/sound), auto-record gate, drift follower, next-spot suggestion |
 | `Geo.kt` | intersection / least squares of bearings |
 | `Sensors.kt` | GPS (LocationManager), compass (rotation vector), declination |
 | `Db.kt`, `Export.kt` | SQLite, shareable CSV and GeoJSON |

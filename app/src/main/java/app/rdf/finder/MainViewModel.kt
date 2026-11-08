@@ -88,6 +88,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val gpsValid: StateFlow<Boolean> = _gpsValid.asStateFlow()
     private val _heading = MutableStateFlow(HeadingInfo())
     val heading: StateFlow<HeadingInfo> = _heading.asStateFlow()
+    private val aimCue = AimCue(app)
+    private val cueScheduler = CueScheduler()
+    private val autoGate = AutoRecordGate()
+    @Volatile private var wantConnected = false
+    @Volatile private var resumeTrack = false
+    private var reconnectJob: Job? = null
+    @Volatile private var lastHeardMs = 0L
+    private var assistTick = 0
+    private val _heardAgoS = MutableStateFlow<Double?>(null)
+    /** Seconds since a transmission above the squelch threshold was last measured (null = never). */
+    val heardAgoS: StateFlow<Double?> = _heardAgoS.asStateFlow()
+    private val _aimErr = MutableStateFlow<Double?>(null)
+    /** Signed turn (°) from the antenna to the peak: negative = turn left. Null without a reliable peak. */
+    val aimErr: StateFlow<Double?> = _aimErr.asStateFlow()
+    private val _nextSpot = MutableStateFlow<NextSpot.Spot?>(null)
+    val nextSpot: StateFlow<NextSpot.Spot?> = _nextSpot.asStateFlow()
     private val _peak = MutableStateFlow<PeakInfo?>(null)
     /** Strongest direction found while sweeping the antenna (null until enough data). */
     val peak: StateFlow<PeakInfo?> = _peak.asStateFlow()
@@ -119,7 +135,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 _gpsValid.value = gps.isValid()
                 _gainDb.value = sdr.gainDb
                 updateHeading()
-                updatePeak()
+                updateAssist()
             }
         }
         viewModelScope.launch {
@@ -166,14 +182,76 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun norm(x: Double) = ((x % 360.0) + 360.0) % 360.0
 
-    private fun updatePeak() {
+    /** Runs every 200 ms: sweep assist, aim cue, auto-record, next-spot suggestion, reconnection. */
+    private fun updateAssist() {
         val now = System.currentTimeMillis()
+        val tracking = _mode.value == Mode.Track
         val lv = _live.value
         val h = _heading.value.trueDeg
-        if (_mode.value == Mode.Track && lv.running && !lv.clipping && h != null && f("use_sensor") == "true") {
-            lv.powerDb?.let { peakFinder.add(h, it, now) }
+        val sensor = f("use_sensor") == "true"
+
+        if (tracking && lv.running) {
+            val sql = fd("listen_sql") ?: 6.0
+            if ((lv.snrDb ?: -99.0) >= sql) lastHeardMs = now
+            // only feed the peak finder during/just after transmissions, so silent gaps don't dilute the lobe
+            if (!lv.clipping && h != null && sensor && now - lastHeardMs < 3000) {
+                lv.powerDb?.let { peakFinder.add(h, it, now) }
+            }
         }
-        _peak.value = if (_mode.value == Mode.Track) peakFinder.estimate(now) else null
+        _heardAgoS.value = if (!tracking || lastHeardMs == 0L) null else (now - lastHeardMs) / 1000.0
+        val pk = if (tracking) peakFinder.estimate(now) else null
+        _peak.value = pk
+
+        val err = if (tracking && sensor && pk != null && pk.reliable && h != null) AimMath.signedError(h, pk.bearing) else null
+        _aimErr.value = err
+        val mode = AimCueMode.parse(f("aim_cue"))
+        if (mode != AimCueMode.NONE) cueScheduler.next(err, now)?.let { aimCue.play(it, mode) }
+
+        if (tracking && f("auto_rec") == "true") {
+            val fix = gps.fix.value
+            val heard = lv.snrDb != null && lv.snrDb >= (fd("listen_sql") ?: 6.0)
+            val ok = gps.isValid() && fix != null
+            if (autoGate.check(now, if (sensor) h else null, pk, heard, if (ok) fix!!.lat else null, if (ok) fix!!.lon else null)) {
+                msg("Auto-recording: antenna held on the peak")
+                recordPoint(usePeak = true)
+            }
+        } else {
+            autoGate.reset()
+        }
+
+        if (assistTick++ % 5 == 0) {
+            val d = _session.value
+            val fix = gps.fix.value
+            _nextSpot.value = if (d.points.isNotEmpty() && fix != null && gps.isValid()) {
+                NextSpot.suggest(d.points.map { Geo.Ray(it.lat, it.lon, it.bearingTrue) }, d.estimate, fix.lat, fix.lon)
+            } else null
+        }
+
+        if (wantConnected && !client.connected && reconnectJob?.isActive != true) startReconnect()
+    }
+
+    private fun startReconnect() {
+        reconnectJob = viewModelScope.launch(Dispatchers.IO) {
+            msg("SDR connection lost: reconnecting…")
+            var attempt = 0
+            while (wantConnected && !client.connected) {
+                _sdrConnected.value = false
+                _sdrInfo.value = "Reconnecting… (${++attempt})"
+                try {
+                    client.connect(f("sdr_host").trim(), (fd("sdr_port") ?: 1234.0).toInt())
+                    _sdrConnected.value = true
+                    _sdrInfo.value = "Connected · tuner ${tunerName(client.tunerType)}"
+                    msg("SDR reconnected")
+                    if (resumeTrack) {
+                        resumeTrack = false
+                        withContext(Dispatchers.Main) { startTrack() }
+                    }
+                    return@launch
+                } catch (e: Exception) {
+                    delay(minOf(1000L shl minOf(attempt, 3), 5000L))
+                }
+            }
+        }
     }
 
     private fun updateHeading() {
@@ -207,6 +285,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 _sdrInfo.value = "Connecting…"
                 client.connect(f("sdr_host").trim(), (fd("sdr_port") ?: 1234.0).toInt())
                 _sdrConnected.value = true
+                wantConnected = true
                 _sdrInfo.value = "Connected · tuner ${tunerName(client.tunerType)}"
             } catch (e: Exception) {
                 _sdrInfo.value = "Disconnected"
@@ -216,7 +295,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun disconnect() {
+        wantConnected = false
+        resumeTrack = false
         viewModelScope.launch {
+            reconnectJob?.cancelAndJoin()
             job?.cancelAndJoin()
             client.close()
             _sdrConnected.value = false
@@ -247,6 +329,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
+                    if (newMode == Mode.Track && !client.connected) resumeTrack = true // resume after auto-reconnect
                     msg("SDR error: ${e.message ?: e.javaClass.simpleName}")
                 } finally {
                     _mode.value = Mode.Idle
@@ -256,6 +339,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun stopAll() {
+        resumeTrack = false
         viewModelScope.launch { job?.cancelAndJoin() }
     }
 
@@ -292,9 +376,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val g = gain("trk_gain")
         val freq = fMhz * 1e6
         peakFinder.clear()
+        lastHeardMs = 0L
+        resumeTrack = false
         launchSdr(Mode.Track) {
             withContext(Dispatchers.IO) { ensureSession(freq) }
-            tracker.run(sdr, freq, bw * 1e3, g, _live)
+            tracker.run(sdr, freq, bw * 1e3, g, _live, follow = f("follow_drift") == "true")
         }
     }
 
@@ -447,6 +533,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             fix.accM?.let { if (it > 25f) warn.add("Poor GPS accuracy (±${it.roundToInt()} m)") }
             if (meas.clipping) warn.add("Signal clipping: lower the gain")
             if (useSensor && compass.accuracy.value < 2) warn.add("Compass not calibrated: move the phone in a figure 8")
+            peakFinder.clear() // new position: the old lobe no longer applies
             msg(if (warn.isEmpty()) "Point recorded · bearing ${bearingTrue.roundToInt()}°" else "⚠ " + warn.joinToString(" · "))
         }
     }
@@ -515,6 +602,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         gps.stop()
         compass.stop()
         beeper.stop()
+        aimCue.shutdown()
         voice.stop()
         db.close()
     }
@@ -525,7 +613,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             "trk_freq" to "", "trk_bw" to "12.5", "trk_gain" to "30", "trk_bearing" to "",
             "sdr_host" to "127.0.0.1", "sdr_port" to "1234", "sdr_ppm" to "0", "sdr_settle" to "80",
             "mount_axis" to "TOP", "heading_offset" to "0", "use_sensor" to "true", "use_volume" to "true",
-            "map_offline" to "false", "map_style" to "TOPO", "listen_mode" to "NFM", "listen_sql" to "6", "listen_vol" to "100", "auto_att" to "false", "night_mode" to "false", "dl_zmin" to "12", "dl_zmax" to "16",
+            "map_offline" to "false", "map_style" to "TOPO", "listen_mode" to "NFM", "listen_sql" to "6", "listen_vol" to "100", "auto_att" to "false", "aim_cue" to "none", "auto_rec" to "false", "follow_drift" to "true", "night_mode" to "false", "dl_zmin" to "12", "dl_zmax" to "16",
         )
     }
 }

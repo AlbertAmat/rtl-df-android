@@ -63,8 +63,26 @@ class PeakFinderTest {
         assertNull(pf.estimate(100))
     }
 
-    @Test fun oldSamplesExpire() {
+    @Test fun lastReliablePeakIsHeldThenDropped() {
+        val pf = PeakFinder(maxAgeMs = 10_000, holdMs = 60_000)
+        sweep(pf, 130.0, 0, 359)
+        assertTrue(pf.estimate(36_000)!!.reliable)
+        val held = pf.estimate(50_000)!! // samples expired, but the peak is kept
+        assertTrue(held.held && held.reliable)
+        assertEquals(130.0, held.bearing, 5.0)
+        assertNull(pf.estimate(200_000))
+    }
+
+    @Test fun clearForgetsHeldPeak() {
         val pf = PeakFinder(maxAgeMs = 10_000)
+        sweep(pf, 130.0, 0, 359)
+        pf.estimate(36_000)
+        pf.clear()
+        assertNull(pf.estimate(37_000))
+    }
+
+    @Test fun oldSamplesExpire() {
+        val pf = PeakFinder(maxAgeMs = 10_000, holdMs = 0)
         sweep(pf, 130.0, 0, 359)
         assertNull(pf.estimate(200_000))
     }

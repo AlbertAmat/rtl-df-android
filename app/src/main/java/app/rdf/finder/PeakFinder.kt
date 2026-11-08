@@ -18,6 +18,8 @@ data class PeakInfo(
     val reliable: Boolean,
     /** Smoothed power per heading bin (NaN = no data), bin i covers [i*binDeg, (i+1)*binDeg). */
     val profile: DoubleArray = DoubleArray(0),
+    /** True when no longer measured: the last reliable peak, kept so you can still aim between transmissions. */
+    val held: Boolean = false,
 )
 
 /**
@@ -30,14 +32,17 @@ class PeakFinder(
     private val maxAgeMs: Long = 45_000,
     private val minProminenceDb: Double = 4.0,
     private val minCoverageDeg: Double = 60.0,
+    private val holdMs: Long = 300_000,
 ) {
     private val nBins = 360 / binDeg
     private data class Entry(val t: Long, val bin: Int, val power: Double)
 
     private val entries = ArrayDeque<Entry>()
+    private var lastReliable: PeakInfo? = null
+    private var lastReliableMs = 0L
 
     @Synchronized
-    fun clear() = entries.clear()
+    fun clear() { entries.clear(); lastReliable = null }
 
     @Synchronized
     fun add(headingDeg: Double, powerDb: Double, nowMs: Long) {
@@ -52,8 +57,21 @@ class PeakFinder(
         while (entries.size > 4000) entries.removeFirst()
     }
 
+    /** Current peak, or the last reliable one (marked [PeakInfo.held]) for up to [holdMs]. */
     @Synchronized
     fun estimate(nowMs: Long): PeakInfo? {
+        val r = compute(nowMs)
+        if (r != null && r.reliable) {
+            lastReliable = r
+            lastReliableMs = nowMs
+            return r
+        }
+        val h = lastReliable
+        if (h != null && nowMs - lastReliableMs <= holdMs) return h.copy(held = true)
+        return r
+    }
+
+    private fun compute(nowMs: Long): PeakInfo? {
         expire(nowMs)
         if (entries.size < 10) return null
         // Per-bin 80th percentile: robust against intermittent transmissions (PTT) and single outliers.

@@ -73,6 +73,7 @@ import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.sin
@@ -246,6 +247,7 @@ fun Header(vm: MainViewModel) {
 fun MapPane(vm: MainViewModel, holder: MapHolder) {
     val ctx = LocalContext.current
     val data by vm.session.collectAsStateWithLifecycle()
+    val nextSpot by vm.nextSpot.collectAsStateWithLifecycle()
     val fix by vm.gps.fix.collectAsStateWithLifecycle()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val offlineOnly = vm.f("map_offline") == "true"
@@ -297,7 +299,7 @@ fun MapPane(vm: MainViewModel, holder: MapHolder) {
                     m.controller.setCenter(GeoPoint(fx.lat, fx.lon))
                     holder.centered = true
                 }
-                MapOverlays.render(m, ctx, data, fx, night)
+                MapOverlays.render(m, ctx, data, fx, night, nextSpot)
             },
         )
         Text(
@@ -646,6 +648,9 @@ fun TrackTab(vm: MainViewModel, holder: MapHolder) {
     }
 
     val peak by vm.peak.collectAsStateWithLifecycle()
+    val heardAgo by vm.heardAgoS.collectAsStateWithLifecycle()
+    val aimErr by vm.aimErr.collectAsStateWithLifecycle()
+    val nextSpot by vm.nextSpot.collectAsStateWithLifecycle()
     Panel(Modifier.fillMaxWidth()) {
         Row(Modifier.padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -665,6 +670,15 @@ fun TrackTab(vm: MainViewModel, holder: MapHolder) {
                     color = if ((live.snrDb ?: 0.0) >= 6.0) OK else MUTED,
                 )
                 Text("10 s peak ${live.peakDb?.let { f1(it) } ?: "--"} dB", fontSize = 12.sp, color = MUTED)
+                heardAgo?.let {
+                    Text(
+                        if (it < 1.0) "● HEARD NOW" else "Last heard ${it.roundToInt()} s ago",
+                        fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (it < 1.0) OK else MUTED,
+                    )
+                }
+                if (abs(live.driftHz) >= 500) {
+                    Text("Carrier followed ${if (live.driftHz > 0) "+" else ""}${f1(live.driftHz / 1000)} kHz", fontSize = 12.sp, color = MUTED)
+                }
                 if (live.clipping) Text("⚠ CLIPPING · − ATT", color = BAD, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
             PolarPlot(peak, heading.trueDeg, Modifier.size(150.dp))
@@ -742,11 +756,19 @@ fun TrackTab(vm: MainViewModel, holder: MapHolder) {
                     Text("Sweep the antenna slowly through a full turn to find the strongest direction.", fontSize = 13.sp, color = MUTED)
                 } else {
                     Text(
-                        "PEAK ${pk.bearing.roundToInt()}° true · +${f1(pk.prominenceDb)} dB over average",
+                        "PEAK ${pk.bearing.roundToInt()}° true · +${f1(pk.prominenceDb)} dB over average" + if (pk.held) " · HELD" else "",
                         fontSize = 16.sp, fontWeight = FontWeight.Bold, color = if (pk.reliable) OK else WARN,
                     )
+                    aimErr?.let { e ->
+                        val on = abs(e) < 4.0
+                        Text(
+                            if (on) "● ON TARGET" else if (e < 0) "◀ TURN LEFT ${abs(e).roundToInt()}°" else "TURN RIGHT ${abs(e).roundToInt()}° ▶",
+                            fontSize = 22.sp, fontWeight = FontWeight.Bold, color = if (on) OK else ACCENT,
+                        )
+                    }
                     Text(
-                        if (pk.reliable) "Point the Yagi at ${pk.bearing.roundToInt()}° and record, or record at the peak directly."
+                        if (pk.reliable && pk.held) "No signal right now: the last peak is kept so you can still aim."
+                        else if (pk.reliable) "Point the Yagi at ${pk.bearing.roundToInt()}° and record, or record at the peak directly."
                         else "Not reliable yet (${pk.coverageDeg.roundToInt()}° covered): sweep a wider arc past the lobe.",
                         fontSize = 12.sp, color = MUTED,
                     )
@@ -792,9 +814,36 @@ fun TrackTab(vm: MainViewModel, holder: MapHolder) {
         }
     }
 
+    nextSpot?.let { ns ->
+        Panel(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Label("Next spot")
+                Text(
+                    "Walk ${ns.distM.roundToInt()} m toward ${ns.walkBearingDeg.roundToInt()}° (${compassWord(ns.walkBearingDeg)})",
+                    fontSize = 18.sp, fontWeight = FontWeight.Bold, color = ACCENT,
+                )
+                Text(
+                    "Expected angle to the other bearings: ${ns.expectedSepDeg.roundToInt()}°" +
+                        if (ns.assumedRange) " (distance to the emitter is a guess until you have 2 fixes)" else "",
+                    fontSize = 12.sp, color = MUTED,
+                )
+                TacOutlinedButton(
+                    onClick = {
+                        holder.map?.controller?.setZoom(16.0)
+                        holder.map?.controller?.animateTo(GeoPoint(ns.lat, ns.lon))
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("SHOW ON MAP", fontSize = 12.sp) }
+            }
+        }
+    }
+
     EstimateCard(data, holder)
     PointsList(vm, data)
 }
+
+private fun compassWord(deg: Double): String =
+    arrayOf("N", "NE", "E", "SE", "S", "SW", "W", "NW")[(((deg % 360 + 360) % 360 + 22.5) / 45).toInt() % 8]
 
 @Composable
 fun EstimateCard(data: SessionData, holder: MapHolder) {
@@ -968,6 +1017,25 @@ fun SettingsTab(vm: MainViewModel, holder: MapHolder) {
         color = MUTED,
     )
     SwitchRow("Volume keys = record point", vm.f("use_volume") == "true") { vm.setField("use_volume", it.toString()) }
+    SwitchRow("Auto-record when the antenna is held on the peak", vm.f("auto_rec") == "true") { vm.setField("auto_rec", it.toString()) }
+    Text(
+        "Records a fix by itself after ~2 s steady on a reliable peak, at least 20 m from the previous auto fix.",
+        fontSize = 12.sp, color = MUTED,
+    )
+    SwitchRow("Follow carrier drift while tracking", vm.f("follow_drift") == "true") { vm.setField("follow_drift", it.toString()) }
+    Text("Aim cue (which way to turn the antenna)", fontWeight = FontWeight.Bold)
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        for ((key, label) in listOf("none" to "None", "haptic" to "Haptic", "sound" to "Sound")) {
+            Row(Modifier.clickable { vm.setField("aim_cue", key) }, verticalAlignment = Alignment.CenterVertically) {
+                RadioButton(selected = vm.f("aim_cue") == key, onClick = { vm.setField("aim_cue", key) })
+                Text(label, fontSize = 13.sp)
+            }
+        }
+    }
+    Text(
+        "Pulses get faster as you approach the peak: one short = turn left, two short = turn right, one long = on target.",
+        fontSize = 12.sp, color = MUTED,
+    )
     SwitchRow("Offline-only map (no tile downloads)", vm.f("map_offline") == "true") { vm.setField("map_offline", it.toString()) }
 
     Text("Map style", fontWeight = FontWeight.Bold)

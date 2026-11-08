@@ -19,6 +19,8 @@ data class LiveState(
     val clipping: Boolean = false,
     val gainDb: Double? = null,
     val history: List<Float> = emptyList(),
+    /** How far the followed carrier has drifted from the frequency you entered (Hz). */
+    val driftHz: Double = 0.0,
 )
 
 data class PointSample(
@@ -40,8 +42,11 @@ class Tracker {
     @Volatile private var gainDb: Double? = null
     @Volatile private var sdrRef: Sdr? = null
 
-    suspend fun run(sdr: Sdr, freq: Double, bwHz: Double, gain: Double?, state: MutableStateFlow<LiveState>) {
+    suspend fun run(sdr: Sdr, freq: Double, bwHz: Double, gain: Double?, state: MutableStateFlow<LiveState>, follow: Boolean = true) {
         synchronized(lock) { samples.clear() }
+        val nominal = freq
+        var cur = freq
+        val drift = DriftFollower()
         freqHz = freq
         sdrRef = sdr
         sdr.configure(FS, gain)
@@ -77,6 +82,25 @@ class Tracker {
                 val snr = chanDb - noiseDb
                 ema = if (ema == null) chanDb else 0.65 * ema + 0.35 * chanDb
 
+                if (follow && !clip) {
+                    // carrier offset inside the channel: power centroid around the strongest bin
+                    val win = max(2, (half * 1.5).roundToInt())
+                    var kp = k0
+                    for (k in max(1, k0 - win)..min(NFFT - 2, k0 + win)) if (p[k] > p[kp]) kp = k
+                    val c0 = max(0, kp - 1); val c1 = min(NFFT - 1, kp + 1)
+                    var sw = 0.0; var sk = 0.0
+                    for (k in c0..c1) { sw += p[k]; sk += p[k] * k }
+                    val offsetHz = (sk / sw - k0) * df
+                    val corr = drift.update(offsetHz, snr)
+                    if (corr != null) {
+                        cur += corr
+                        freqHz = cur
+                        sdr.tune(Math.round(cur - OFFSET))
+                        synchronized(lock) { samples.clear() } // measurements before the retune are stale
+                        continue
+                    }
+                }
+
                 val now = System.currentTimeMillis()
                 val snapshot = synchronized(lock) {
                     samples.addLast(Sample(now, chanDb, snr, clip))
@@ -85,9 +109,10 @@ class Tracker {
                 }
                 val peak = snapshot.filter { now - it.t <= 10_000 }.maxOf { it.power }
                 state.value = LiveState(
-                    running = true, freqHz = freq, powerDb = chanDb, snrDb = snr, smoothDb = ema,
+                    running = true, freqHz = cur, powerDb = chanDb, snrDb = snr, smoothDb = ema,
                     peakDb = peak, clipping = clip, gainDb = gainDb,
                     history = snapshot.takeLast(150).map { it.power.toFloat() },
+                    driftHz = cur - nominal,
                 )
             }
         } finally {

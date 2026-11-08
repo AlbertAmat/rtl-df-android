@@ -18,9 +18,10 @@ object MapOverlays {
     private val RAY_DAY = Color.rgb(255, 179, 0)
     private val FRIENDLY_DAY = Color.rgb(63, 167, 255)
     private val HOSTILE_DAY = Color.rgb(229, 72, 58)
+    private val NEXT_DAY = Color.rgb(76, 175, 80)
     private val RED_NIGHT = Color.rgb(255, 68, 51)
 
-    fun render(map: MapView, ctx: Context, data: SessionData, fix: GpsFix?, night: Boolean) {
+    fun render(map: MapView, ctx: Context, data: SessionData, fix: GpsFix?, night: Boolean, next: NextSpot.Spot? = null) {
         // blue = own position, amber = bearing lines, red = estimated emitter; all red in night mode
         val rayColor = if (night) RED_NIGHT else RAY_DAY
         val ownColor = if (night) RED_NIGHT else FRIENDLY_DAY
@@ -79,6 +80,17 @@ object MapOverlays {
                     setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
                     icon = dot(ctx, emitterColor, 32, null)
                     title = "Estimated emitter"
+                },
+            )
+        }
+
+        if (next != null) {
+            map.overlays.add(
+                Marker(map).apply {
+                    position = GeoPoint(next.lat, next.lon)
+                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                    icon = dot(ctx, if (night) RED_NIGHT else NEXT_DAY, 26, "→")
+                    title = "Next spot · ${"%.0f".format(next.distM)} m · ${"%.0f".format(next.expectedSepDeg)}° expected angle"
                 },
             )
         }
