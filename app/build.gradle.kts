@@ -12,13 +12,27 @@ android {
         applicationId = "app.rdf.finder"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = (project.findProperty("appVersionCode") as String?)?.toInt() ?: 1
+        versionName = (project.findProperty("appVersion") as String?) ?: "1.0"
+    }
+
+    // Release signing comes from the environment (CI secrets); without it the release build stays unsigned
+    val keystorePath = System.getenv("RDF_KEYSTORE")
+    signingConfigs {
+        if (keystorePath != null) {
+            create("release") {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("RDF_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("RDF_KEY_ALIAS")
+                keyPassword = System.getenv("RDF_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (keystorePath != null) signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {

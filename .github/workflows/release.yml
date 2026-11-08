@@ -1,0 +1,42 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Test
+        run: ./gradlew test
+      - name: Build (signed release if keystore secrets are set, debug otherwise)
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          RDF_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          RDF_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          RDF_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            export RDF_KEYSTORE="$RUNNER_TEMP/release.jks"
+            ./gradlew assembleRelease -PappVersion="$VERSION" -PappVersionCode="${GITHUB_RUN_NUMBER}"
+            cp app/build/outputs/apk/release/app-release.apk "rdf-finder-${GITHUB_REF_NAME}.apk"
+          else
+            ./gradlew assembleDebug -PappVersion="$VERSION" -PappVersionCode="${GITHUB_RUN_NUMBER}"
+            cp app/build/outputs/apk/debug/app-debug.apk "rdf-finder-${GITHUB_REF_NAME}-debug.apk"
+          fi
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" rdf-finder-*.apk --generate-notes --title "$GITHUB_REF_NAME"

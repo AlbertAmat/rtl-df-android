@@ -2,6 +2,11 @@ package app.rdf.finder
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.net.Uri
+import android.os.BatteryManager
+import android.speech.tts.TextToSpeech
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -21,6 +26,7 @@ import kotlinx.coroutines.withContext
 import java.time.Instant
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -49,7 +55,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         for ((k, v) in DEFAULTS) put(k, prefs.getString(k, v) ?: v)
     }
 
-    fun f(k: String): String = fields[k] ?: DEFAULTS[k] ?: ""
+    fun f(k: String): String = fields[k] ?: DEFAULTS[k] ?: prefs.getString(k, null) ?: ""
     fun setField(k: String, v: String) {
         fields[k] = v
         prefs.edit().putString(k, v).apply()
@@ -101,6 +107,39 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Current tuner gain in dB (null = AGC), updated live while tracking. */
     val gainDb: StateFlow<Double?> = _gainDb.asStateFlow()
     private var lastAutoAtt = 0L
+    private val trendCoach = TrendCoach()
+    private val bursts = BurstDetector()
+    private val _trend = MutableStateFlow<Trend?>(null)
+    /** Hotter / colder compared with the last few seconds (null = not enough data). */
+    val trend: StateFlow<Trend?> = _trend.asStateFlow()
+    private val _burst = MutableStateFlow<BurstInfo?>(null)
+    /** Regular on/off pattern of the fox, once three bursts have been seen. */
+    val burst: StateFlow<BurstInfo?> = _burst.asStateFlow()
+    private val _battery = MutableStateFlow<Int?>(null)
+    val battery: StateFlow<Int?> = _battery.asStateFlow()
+    private val _atMinGain = MutableStateFlow(false)
+    /** The tuner is already at its lowest gain: further attenuation has to be external. */
+    val atMinGain: StateFlow<Boolean> = _atMinGain.asStateFlow()
+    private val _driftHz = MutableStateFlow<Double?>(null)
+    /** Carrier offset from the channel centre (Hz), smoothed; null without a clear carrier. */
+    val driftHz: StateFlow<Double?> = _driftHz.asStateFlow()
+    private val _download = MutableStateFlow<Pair<Int, Int>?>(null)
+    /** Offline map download progress (done, total) or null when idle. */
+    val download: StateFlow<Pair<Int, Int>?> = _download.asStateFlow()
+    fun setDownload(done: Int, total: Int) { _download.value = if (total > 0 && done < total) done to total else null }
+    fun clearDownload() { _download.value = null }
+
+    // SDR link supervision: reconnect by itself and resume tracking
+    @Volatile private var wantLink = false
+    @Volatile private var linkBusy = false
+    @Volatile private var activeMode: Mode? = null
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
+    private var lastSpoken = 0L
+    private var lastSpokenTrend: Trend? = null
+    private var batteryTick = 0
+    private var batteryWarned = false
+    @Volatile private var keepSession = false
     private val _sound = MutableStateFlow(false)
     val sound: StateFlow<Boolean> = _sound.asStateFlow()
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 16)
@@ -120,6 +159,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 _gainDb.value = sdr.gainDb
                 updateHeading()
                 updatePeak()
+                updateGuidance()
+                maybeReconnect()
+                if (batteryTick++ % 50 == 0) updateBattery()
             }
         }
         viewModelScope.launch {
@@ -140,7 +182,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // squelch opens on the measured SNR of the tracked channel
                 voice.demod.squelchOpen = snr != null && snr > (fd("listen_sql") ?: 6.0)
                 voice.demod.volume = ((fd("listen_vol") ?: 100.0) / 100.0).coerceIn(0.0, 4.0).toFloat()
-                voice.demod.mode = if (f("listen_mode") == "AM") Demod.Mode.AM else Demod.Mode.NFM
+                voice.demod.mode = runCatching { Demod.Mode.valueOf(f("listen_mode")) }.getOrDefault(Demod.Mode.NFM)
+                if (l.running) {
+                    val now = System.currentTimeMillis()
+                    (l.smoothDb ?: l.powerDb)?.takeIf { !l.clipping }?.let { trendCoach.add(now, it) }
+                    l.snrDb?.let { bursts.add(now, it) }
+                }
                 if (f("auto_att") == "true" && l.running && l.clipping) autoAttenuate()
                 beeper.freqHz =
                     if (_sound.value && !_listen.value && l.running && snr != null && snr > 3) 250.0 + (snr / 40.0).coerceIn(0.0, 1.0) * 1250.0
@@ -189,6 +236,76 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
+    private fun updateGuidance() {
+        val now = System.currentTimeMillis()
+        val tracking = _mode.value == Mode.Track && _live.value.running
+        val tr = if (tracking) trendCoach.trend(now) else null
+        _trend.value = tr
+        _burst.value = if (tracking) bursts.info(now) else null
+        val g = sdr.gainDb
+        _atMinGain.value = g != null && g <= sdr.gainSteps().first() + 0.05
+        val d = if (tracking) _live.value.spectrum?.let { Drift.offsetHz(it, Tracker.SPEC_BIN_HZ) } else null
+        val prev = _driftHz.value
+        _driftHz.value = if (d == null) null else if (prev == null) d else prev + 0.15 * (d - prev)
+        if (tracking && f("coach") == "true" && !_listen.value) coach(tr, now)
+    }
+
+    private fun coach(tr: Trend?, now: Long) {
+        val t = tts ?: return
+        if (!ttsReady || now - lastSpoken < 4000) return
+        val snr = _live.value.snrDb
+        val text = when {
+            tr != null && tr != Trend.STEADY && tr != lastSpokenTrend -> if (tr == Trend.HOTTER) "hotter" else "colder"
+            snr != null && now - lastSpoken > 10_000 -> "${snr.roundToInt()}"
+            else -> null
+        } ?: return
+        lastSpokenTrend = tr
+        lastSpoken = now
+        t.speak(text, TextToSpeech.QUEUE_FLUSH, null, "coach")
+    }
+
+    /** Voice cues ("hotter", "colder", SNR readout) so the phone can stay in a pocket. */
+    fun setCoach(on: Boolean) {
+        setField("coach", on.toString())
+        if (on && tts == null) {
+            tts = TextToSpeech(getApplication<Application>()) { st ->
+                ttsReady = st == TextToSpeech.SUCCESS
+                if (ttsReady) tts?.setLanguage(Locale.US)
+            }
+        }
+    }
+
+    private fun updateBattery() {
+        val i = getApplication<Application>().registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) ?: return
+        val level = i.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+        val scale = i.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
+        if (level < 0) return
+        val pct = (level * 100f / scale).roundToInt()
+        _battery.value = pct
+        val charging = i.getIntExtra(BatteryManager.EXTRA_STATUS, 0).let {
+            it == BatteryManager.BATTERY_STATUS_CHARGING || it == BatteryManager.BATTERY_STATUS_FULL
+        }
+        if (pct <= 15 && !charging && !batteryWarned) {
+            batteryWarned = true
+            msg("Battery low ($pct%): capture and GPS drain it, save your fixes")
+        }
+        if (pct > 25) batteryWarned = false
+    }
+
+    /** Re-tunes to where the carrier actually is (cheap dongles drift) and keeps the same hunt. */
+    fun retuneToDrift() {
+        val d = _driftHz.value ?: return
+        val fMhz = fd("trk_freq") ?: return
+        setField("trk_freq", f1(fMhz + d / 1e6))
+        keepSession = true
+        startTrack()
+    }
+
+    // ---- fox names: a label per frequency (stored on the phone)
+    /** Preference key of the label for a frequency (100 Hz resolution). */
+    fun foxKey(freqMhz: Double) = "fox_" + Math.round(freqMhz * 10_000)
+    fun foxName(freqMhz: Double?): String = if (freqMhz == null) "" else f(foxKey(freqMhz))
+
     // ------------------------------------------------------------ sensors
     fun startSensors(locationGranted: Boolean) {
         if (locationGranted) gps.start()
@@ -202,20 +319,63 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ------------------------------------------------------------ SDR connection
     fun connect() {
+        if (linkBusy) return
+        linkBusy = true
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 _sdrInfo.value = "Connecting…"
                 client.connect(f("sdr_host").trim(), (fd("sdr_port") ?: 1234.0).toInt())
                 _sdrConnected.value = true
+                wantLink = true
                 _sdrInfo.value = "Connected · tuner ${tunerName(client.tunerType)}"
             } catch (e: Exception) {
                 _sdrInfo.value = "Disconnected"
                 msg("Could not connect (${e.message}). Is SDR driver running (tap \"Start\")?")
+            } finally {
+                linkBusy = false
+            }
+        }
+    }
+
+    /** The link dropped while we still want it (SDR driver restarted, USB glitch): retry with back-off, then resume tracking. */
+    private fun maybeReconnect() {
+        if (!wantLink || linkBusy || client.connected) return
+        linkBusy = true
+        val resume = activeMode
+        viewModelScope.launch(Dispatchers.IO) {
+            _sdrInfo.value = "Link lost · reconnecting…"
+            msg("SDR link lost: reconnecting…")
+            var wait = 1000L
+            var tries = 0
+            try {
+                while (wantLink && !client.connected && tries < 30) {
+                    delay(wait)
+                    try {
+                        client.connect(f("sdr_host").trim(), (fd("sdr_port") ?: 1234.0).toInt())
+                    } catch (_: Exception) {
+                    }
+                    wait = min(wait * 2, 5000L)
+                    tries++
+                }
+            } finally {
+                linkBusy = false
+            }
+            if (client.connected) {
+                _sdrConnected.value = true
+                _sdrInfo.value = "Connected · tuner ${tunerName(client.tunerType)}"
+                msg("SDR reconnected")
+                if (resume == Mode.Track) withContext(Dispatchers.Main) { keepSession = true; startTrack() }
+            } else if (wantLink) {
+                wantLink = false
+                _sdrInfo.value = "Disconnected"
+                msg("Could not reconnect: tap CONNECT SDR")
             }
         }
     }
 
     fun disconnect() {
+        wantLink = false
+        activeMode = null
         viewModelScope.launch {
             job?.cancelAndJoin()
             client.close()
@@ -241,9 +401,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             sdr.settleMs = settle // applied only once the previous job has stopped using the SDR
             sdr.ppm = ppm
             _mode.value = newMode
+            activeMode = newMode
             job = viewModelScope.launch(Dispatchers.Default) {
                 try {
                     block()
+                    activeMode = null // finished by itself (a scan): nothing to resume
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -256,6 +418,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun stopAll() {
+        activeMode = null
         viewModelScope.launch { job?.cancelAndJoin() }
     }
 
@@ -292,8 +455,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val g = gain("trk_gain")
         val freq = fMhz * 1e6
         peakFinder.clear()
+        trendCoach.clear()
+        bursts.clear()
+        lastSpokenTrend = null
+        val keep = keepSession
+        keepSession = false
         launchSdr(Mode.Track) {
-            withContext(Dispatchers.IO) { ensureSession(freq) }
+            withContext(Dispatchers.IO) { ensureSession(freq, keep) }
             tracker.run(sdr, freq, bw * 1e3, g, _live)
         }
     }
@@ -351,9 +519,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ------------------------------------------------------------ sessions and points
-    private fun ensureSession(freq: Double) {
+    private fun ensureSession(freq: Double, keep: Boolean = false) {
         val cur = currentSessionId?.let { db.getSession(it) }
-        if (cur == null || abs(cur.freqHz - freq) > 1000) currentSessionId = db.createSession(freq)
+        if (cur == null || (!keep && abs(cur.freqHz - freq) > 1000)) currentSessionId = db.createSession(freq)
         loadSessionNow()
     }
 
@@ -403,6 +571,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val meas = tracker.sampleForPoint()
             if (meas == null) {
                 msg("Not enough measurements yet: wait a second")
+                return@launch
+            }
+            if (meas.snrDb < 3.0) {
+                msg("No carrier at this frequency (SNR ${meas.snrDb.roundToInt()} dB): fix not recorded")
                 return@launch
             }
             val useSensor = f("use_sensor") == "true"
@@ -485,7 +657,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun export(ctx: Context, csv: Boolean) {
+    enum class Format(val mime: String) { CSV("text/csv"), GEOJSON("application/geo+json"), KML("application/vnd.google-earth.kml+xml"), GPX("application/gpx+xml") }
+
+    fun export(ctx: Context, fmt: Format) {
         val d = _session.value
         val s = d.session
         if (s == null) {
@@ -493,8 +667,43 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
-            val file = if (csv) Export.csv(ctx, s, d.points) else Export.geojson(ctx, s, d.points, d.estimate)
-            withContext(Dispatchers.Main) { Export.share(ctx, file, if (csv) "text/csv" else "application/geo+json") }
+            val name = "Hunt #${s.id} ${String.format(Locale.US, "%.4f", s.freqHz / 1e6)} MHz"
+            val file = when (fmt) {
+                Format.CSV -> Export.csv(ctx, s, d.points)
+                Format.GEOJSON -> Export.geojson(ctx, s, d.points, d.estimate)
+                Format.KML -> Export.write(ctx, "rdf_session_${s.id}.kml", GeoFiles.kml(name, d.points, d.estimate))
+                Format.GPX -> Export.write(ctx, "rdf_session_${s.id}.gpx", GeoFiles.gpx(name, d.points, d.estimate))
+            }
+            withContext(Dispatchers.Main) { Export.share(ctx, file, fmt.mime) }
+        }
+    }
+
+    /** Merges fixes from another operator (a CSV exported by this app) into the current hunt, skipping duplicates. */
+    fun importFixes(ctx: Context, uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val text = try {
+                ctx.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+            } catch (e: Exception) {
+                null
+            }
+            val pts = text?.let { FixImport.parseCsv(it) }.orEmpty()
+            if (pts.isEmpty()) {
+                msg("No fixes found: import a CSV exported by this app")
+                return@launch
+            }
+            var sid = currentSessionId?.takeIf { db.getSession(it) != null }
+            if (sid == null) sid = db.createSession(pts.first().freqHz).also { currentSessionId = it }
+            val have = db.points(sid).map { Triple(it.ts, it.lat, it.lon) }.toSet()
+            var added = 0
+            for (p in pts) {
+                if (Triple(p.ts, p.lat, p.lon) in have) continue
+                db.addPoint(p.copy(sessionId = sid))
+                added++
+            }
+            loadSessionNow()
+            val cur = db.getSession(sid)
+            val off = cur != null && abs(cur.freqHz - pts.first().freqHz) > 1000
+            msg("Imported $added fixes (${pts.size - added} duplicates skipped)" + if (off) " · ⚠ different frequency from this hunt" else "")
         }
     }
 
@@ -516,6 +725,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         compass.stop()
         beeper.stop()
         voice.stop()
+        tts?.shutdown()
         db.close()
     }
 
@@ -525,7 +735,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             "trk_freq" to "", "trk_bw" to "12.5", "trk_gain" to "30", "trk_bearing" to "",
             "sdr_host" to "127.0.0.1", "sdr_port" to "1234", "sdr_ppm" to "0", "sdr_settle" to "80",
             "mount_axis" to "TOP", "heading_offset" to "0", "use_sensor" to "true", "use_volume" to "true",
-            "map_offline" to "false", "map_style" to "TOPO", "listen_mode" to "NFM", "listen_sql" to "6", "listen_vol" to "100", "auto_att" to "false", "night_mode" to "false", "dl_zmin" to "12", "dl_zmax" to "16",
+            "map_offline" to "false", "map_style" to "TOPO", "listen_mode" to "NFM", "listen_sql" to "6", "listen_vol" to "100", "auto_att" to "false", "night_mode" to "false", "coach" to "false", "pwr_norm" to "false", "pwr_offset" to "0", "dl_zmin" to "12", "dl_zmax" to "16",
         )
     }
 }

@@ -58,6 +58,8 @@ object Export {
         return f
     }
 
+    fun write(ctx: Context, name: String, text: String): File = File(dir(ctx), name).apply { writeText(text) }
+
     fun share(ctx: Context, file: File, mime: String) {
         val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.files", file)
         val send = Intent(Intent.ACTION_SEND).apply {

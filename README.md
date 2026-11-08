@@ -16,9 +16,20 @@ Android app for locating transmitters with a Yagi antenna. The phone is mounted 
    - **Attenuate when you get close**: **− ATT** / **+ GAIN** change the tuner gain live, and **Auto-attenuate when clipping** steps it down by itself whenever the signal overloads the receiver (the red *CLIPPING* warning). The gain stored with each point is always the one in force when it was measured.
    - **Listen**: **▶ LISTEN** demodulates the tracked frequency (NFM for walkie-talkies and amateur radio, AM for airband) and plays it on the phone speaker. The squelch opens on the measured SNR; set its threshold and the volume next to the button.
    - **Sweep assist**: swing the Yagi through a full turn and the app bins power by compass heading and shows the strongest direction (`PEAK 130° true · +9 dB over average`). **RECORD FIX AT PEAK** stores a fix with that bearing instead of the instantaneous compass reading. It only enables once the lobe is clear (≥ 4 dB above the average direction and ≥ 60° of heading covered); clipped samples are ignored.
+   - **Hotter / colder**: the Track tab compares the last 3 s of signal with the 4 s before and shows ▲ HOTTER / ▼ COLDER. **VOICE ON** speaks the cues ("hotter", "colder", then the SNR) so the phone can stay in a pocket.
+   - **Timed foxes**: after three bursts with a steady period the app shows `TIMED FOX · every 60 s, on ~10 s · next in 23 s`, so you know when to measure.
+   - **Waterfall and drift**: a rolling spectrum (±128 kHz) around the channel. If the carrier sits more than 1.5 kHz off the tuned frequency (cheap dongles drift), **RETUNE** moves to it and keeps the same hunt.
+   - **Multipath warning**: if sweep assist sees a second lobe within 3 dB of the main one it warns that reflections are likely.
+   - **Fox names**: type a name or note under the frequency; it is saved per frequency and shown in the scan list.
+   - **Modes**: the listen button cycles NFM, AM, USB, LSB and CW.
    - **Polar plot**: next to the signal reading, a north-up plot of the power seen at each heading, with the antenna needle (amber) and the peak (green).
 3. **Record fix** (button or **volume key**): stores GPS position, time (GPS time), frequency, power, SNR, gain and bearing. The bearing comes from the phone compass, with magnetic declination computed automatically from the GPS position.
+   - **At minimum gain and still clipping** the app tells you to add an external attenuator (10–20 dB) or move back.
+   - **Carrier check**: a fix is refused when there is no carrier (SNR < 3 dB).
 4. With 2 or more points it computes the emitter position (weighted least squares: bearings with higher SNR and better GPS count more) and draws it on the map with the rays and a **95% confidence ellipse**. With 4+ points, a bearing that clearly disagrees (reflection, wrong signal) is left out automatically and drawn dashed grey.
+
+5. **Guidance and sharing**: once there is an estimate the app shows the **distance and bearing to the target** from your GPS position and suggests where to take the **next fix** (the spot whose view crosses the earlier ones best, nearest to you). Each fix shows a quality score (SNR and GPS accuracy). Export a hunt as CSV, GeoJSON, **KML** or **GPX**, and **import another operator's CSV** to merge both teams' fixes into one estimate.
+6. **Robustness**: if the SDR link drops (SDR driver restarted, USB glitch) the app reconnects with back-off and resumes tracking by itself. The header shows the **battery level** and warns at 15%. Offline map download has a **progress bar** and an **Around me (3 km)** button.
 
 ## Screenshots
 
@@ -79,8 +90,8 @@ Frame your work area on the map (the download uses the selected map style) and, 
 
 ## Verification status
 - `./gradlew test assembleDebug lintDebug` pass (Gradle 8.9, AGP 8.7.3, Kotlin 2.0.21, compileSdk 35): no compile errors, no Kotlin warnings, no lint errors.
-- The core logic (`rtl_tcp` client, DSP, scanner, tracker, geometry) passes 11 JVM tests against a fake `rtl_tcp` server (`app/src/test`): it detects carriers to within ±3 kHz, measures SNR and locates the emitter to within metres on synthetic data.
-- The whole app was run on an Android 14 emulator against a synthetic `rtl_tcp` source: connect, scan (5 of 5 synthetic emitters found), track, live attenuation (the fake source clips at high gain), listening, record three points with mock GPS, estimate and map overlays, sessions, settings and night mode. The osmdroid map loads tiles and draws the rays correctly.
+- The core logic (`rtl_tcp` client, DSP, scanner, tracker, geometry) passes JVM tests (44 in total) against a fake `rtl_tcp` server (`app/src/test`): it detects carriers to within ±3 kHz, measures SNR and locates the emitter to within metres on synthetic data.
+- The whole app was run on an Android 14 emulator against a synthetic `rtl_tcp` source: connect, scan (5 of 5 synthetic emitters found), track, live attenuation (the fake source clips at high gain), listening, record three points with mock GPS, estimate and map overlays, sessions, settings and night mode; killing and restarting the fake server made the app reconnect and resume tracking by itself. The osmdroid map loads tiles and draws the rays correctly.
 - The demodulator has JVM tests with synthetic NFM and AM signals (tone recovery, squelch, adjacent-channel rejection). Audio playback was checked on the emulator only (the AudioTrack runs without errors); how it sounds with real speech has not been judged.
 - **Not tested on real hardware:** a real RTL-SDR with SDR driver, the phone compass on a Yagi (the emulator demo uses typed bearings), voice quality on real signals, real GPS, USB OTG behaviour, and the offline tile download. The settle time and the behaviour of SDR driver may need tuning.
 
@@ -94,8 +105,10 @@ python3 tools/fake_rtl_tcp.py 1234 /tmp/level      # optional file with a 0..1 l
 In the app, set **Settings → SDR driver connection → Host** to `10.0.2.2` (the emulator's alias for the host machine), then **CONNECT SDR** in the Track tab. Mock GPS positions come from `adb emu geo fix <lon> <lat>`; switch off **Use the phone compass** and type the bearings. Changing the level file while tracking simulates sweeping the antenna.
 
 ## Known limitations
-- Listening is mono NFM/AM only (no wide FM, no digital voice such as DMR or P25), and you are responsible for complying with local rules on monitoring radio communications.
-- No automatic SDR reconnection: if the socket drops, tap **CONNECT SDR** again.
+- Listening is mono NFM/AM/USB/LSB/CW only (no wide FM, no digital voice such as DMR or P25), and you are responsible for complying with local rules on monitoring radio communications.
+- Reconnection retries for about two minutes; after that tap **CONNECT SDR**. An interrupted scan is not resumed, only tracking.
+- Not implemented: Doppler / rotating-antenna DF (needs hardware), terrain and line-of-sight analysis (needs elevation data), wide FM, and live multi-operator sync (fixes are shared by CSV import instead).
+- Gain-compensated power assumes the tuner's gain steps are accurate; it is not calibrated power.
 - The compass "not calibrated" warning relies on the sensor's reported accuracy, which some phones report poorly for the rotation vector.
 - Offline map downloads show start and end messages but no progress bar.
 
@@ -111,6 +124,7 @@ In the app, set **Settings → SDR driver connection → Host** to `10.0.2.2` (t
 | `Sensors.kt` | GPS (LocationManager), compass (rotation vector), declination |
 | `Db.kt`, `Export.kt` | SQLite, shareable CSV and GeoJSON |
 | `Demod.kt` | NFM/AM voice demodulator and speaker output (taps the IQ stream) |
+| `FieldTools.kt` | hot/cold coach, timed-fox detector, fix quality, drift, next-fix guidance, CSV import, KML/GPX writers |
 | `Theme.kt` | tactical theme: palette, night mode, square buttons and panels |
 | `CaptureService.kt` | foreground service that keeps capture and GPS alive in the background |
 | `tools/fake_rtl_tcp.py` | synthetic `rtl_tcp` source for demos and emulator testing |

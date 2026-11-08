@@ -68,4 +68,25 @@ class PeakFinderTest {
         sweep(pf, 130.0, 0, 359)
         assertNull(pf.estimate(200_000))
     }
+
+    @Test fun flagsAReflectionAsMultipath() {
+        val pf = PeakFinder()
+        val rnd = Random(2)
+        var t = 0L
+        for (a in 0..359) {
+            val g = maxOf(gain(a.toDouble(), 100.0), gain(a.toDouble(), 250.0) - 1.0) // two lobes, 1 dB apart
+            pf.add(a.toDouble(), -40.0 + g + rnd.nextDouble(-0.3, 0.3), t); t += 100
+        }
+        val r = pf.estimate(36_000)!!
+        assertTrue(r.multipath)
+        assertTrue(abs(r.secondBearing!! - 250.0) < 15 || abs(r.secondBearing!! - 100.0) < 15)
+    }
+
+    @Test fun singleLobeIsNotMultipath() {
+        val pf = PeakFinder()
+        sweep(pf, 130.0, 0, 359)
+        val r = pf.estimate(36_000)!!
+        assertFalse(r.multipath)
+        assertTrue(r.lobeWidthDeg in 20.0..90.0)
+    }
 }

@@ -6,6 +6,7 @@ import android.media.AudioTrack
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.exp
@@ -70,7 +71,7 @@ internal class DecimFir(private val taps: FloatArray, private val m: Int) {
  * Pure DSP with no Android audio: [VoiceListener] plays the result.
  */
 class Demod(private val fsIn: Int = Tracker.FS, private val offsetHz: Double = Tracker.OFFSET) {
-    enum class Mode { NFM, AM }
+    enum class Mode { NFM, AM, USB, LSB, CW }
 
     @Volatile var mode = Mode.NFM
     @Volatile var squelchOpen = true
@@ -99,11 +100,19 @@ class Demod(private val fsIn: Int = Tracker.FS, private val offsetHz: Double = T
     private var phaseOdd = false
     private var gate = 0f
 
+    // SSB / CW: one-sided channel filters at 32 kHz (the wanted sideband is shifted to be centred first)
+    private val ssbFilt = DecimFir(DecimFir.lowPass(129, 1_500.0 / 32_000.0), 1)
+    private val cwFilt = DecimFir(DecimFir.lowPass(129, 300.0 / 32_000.0), 1)
+    private var ssbPh = 0.0
+    private var cwPh = 0.0
+    private var agc = 0.05f
+
     private val hpA = (1.0 / (1.0 + 2 * PI * 300.0 / 32_000.0)).toFloat()
     private val lpA = (1.0 - exp(-2 * PI * 3_400.0 / 32_000.0)).toFloat()
 
     fun reset() {
-        stage1.reset(); stage2.reset()
+        stage1.reset(); stage2.reset(); ssbFilt.reset(); cwFilt.reset()
+        ssbPh = 0.0; cwPh = 0.0; agc = 0.05f
         pc = 1.0; ps = 0.0
         havePending = false
         prevR = 0f; prevQ = 0f; hpPrevIn = 0f; hpOut = 0f; lp1 = 0f; lp2 = 0f; amMean = 0.1f
@@ -116,7 +125,7 @@ class Demod(private val fsIn: Int = Tracker.FS, private val offsetHz: Double = T
     /** Demodulates [n] interleaved uint8 I/Q bytes; returns the number of 16-bit audio samples written to [out]. */
     fun process(buf: ByteArray, n: Int, out: ShortArray): Int {
         var o = 0
-        val fm = mode == Mode.NFM
+        val md = mode
         val open = squelchOpen
         val vol = volume
         for (i in 0 until n) {
@@ -140,16 +149,39 @@ class Demod(private val fsIn: Int = Tracker.FS, private val offsetHz: Double = T
             val zr = stage2.outI
             val zq = stage2.outQ
             val y: Float
-            if (fm) {
-                val dr = zr * prevR + zq * prevQ
-                val di = zq * prevR - zr * prevQ
-                prevR = zr
-                prevQ = zq
-                y = atan2(di, dr) * FM_SCALE
-            } else {
-                val e = hypot(zr, zq)
-                amMean += 0.0005f * (e - amMean)
-                y = (e - amMean) / max(amMean, 0.02f)
+            when (md) {
+                Mode.NFM -> {
+                    val dr = zr * prevR + zq * prevQ
+                    val di = zq * prevR - zr * prevQ
+                    prevR = zr
+                    prevQ = zq
+                    y = atan2(di, dr) * FM_SCALE
+                }
+                Mode.AM -> {
+                    val e = hypot(zr, zq)
+                    amMean += 0.0005f * (e - amMean)
+                    y = (e - amMean) / max(amMean, 0.02f)
+                }
+                Mode.USB, Mode.LSB -> {
+                    // shift the wanted sideband (0..3 kHz) to -1.5..+1.5 kHz, filter, shift back, keep the real part
+                    val xi = zr
+                    val xq = if (md == Mode.USB) zq else -zq
+                    val c = cos(ssbPh).toFloat(); val sn = sin(ssbPh).toFloat()
+                    ssbPh += SSB_SHIFT; if (ssbPh > 2 * PI) ssbPh -= 2 * PI
+                    ssbFilt.push(xi * c + xq * sn, xq * c - xi * sn) // multiply by e^{-j ph}
+                    val fi = ssbFilt.outI; val fq = ssbFilt.outQ
+                    val raw = fi * c - fq * sn                        // Re{ f * e^{+j ph} }
+                    agc += (if (abs(raw) > agc) 0.02f else 0.0002f) * (abs(raw) - agc)
+                    y = raw / max(agc, 1e-4f) * 0.4f
+                }
+                Mode.CW -> {
+                    cwFilt.push(zr, zq)
+                    val c = cos(cwPh).toFloat(); val sn = sin(cwPh).toFloat()
+                    cwPh += CW_TONE; if (cwPh > 2 * PI) cwPh -= 2 * PI
+                    val raw = cwFilt.outI * c - cwFilt.outQ * sn
+                    agc += (if (abs(raw) > agc) 0.02f else 0.0002f) * (abs(raw) - agc)
+                    y = raw / max(agc, 1e-4f) * 0.4f
+                }
             }
             // remove sub-audio (DC, CTCSS tones) and band-limit to voice
             hpOut = hpA * (hpOut + y - hpPrevIn)
@@ -167,6 +199,8 @@ class Demod(private val fsIn: Int = Tracker.FS, private val offsetHz: Double = T
 
     companion object {
         const val AUDIO_RATE = 16_000
+        private const val SSB_SHIFT = 2 * PI * 1_500.0 / 32_000.0
+        private const val CW_TONE = 2 * PI * 700.0 / 32_000.0
         private const val FM_SCALE = (32_000.0 / (2 * PI * 5_000.0)).toFloat() // 5 kHz deviation = full scale
     }
 }

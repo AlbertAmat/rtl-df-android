@@ -19,6 +19,8 @@ data class LiveState(
     val clipping: Boolean = false,
     val gainDb: Double? = null,
     val history: List<Float> = emptyList(),
+    /** Spectrum around the channel (dB, [SPEC_BINS] bins of [SPEC_BIN_HZ], channel in the middle): waterfall and drift display. */
+    val spectrum: FloatArray? = null,
 )
 
 data class PointSample(
@@ -88,6 +90,7 @@ class Tracker {
                     running = true, freqHz = freq, powerDb = chanDb, snrDb = snr, smoothDb = ema,
                     peakDb = peak, clipping = clip, gainDb = gainDb,
                     history = snapshot.takeLast(150).map { it.power.toFloat() },
+                    spectrum = spectrumAround(p, k0),
                 )
             }
         } finally {
@@ -115,7 +118,17 @@ class Tracker {
         )
     }
 
+    /** Display spectrum: [SPEC_BINS] bins centred on the channel, 2 FFT bins (2 kHz) each, in dB. */
+    private fun spectrumAround(p: DoubleArray, k0: Int): FloatArray = FloatArray(SPEC_BINS) { j ->
+        val k = k0 + (j - SPEC_BINS / 2) * 2
+        var m = 0.0
+        for (q in k..k + 1) if (q in p.indices) m = max(m, p[q])
+        Dsp.db(max(m, 1e-12)).toFloat()
+    }
+
     companion object {
+        const val SPEC_BINS = 128
+        const val SPEC_BIN_HZ = Tracker.FS.toDouble() / NFFT * 2 // 2 kHz
         const val FS = 1_024_000
         const val OFFSET = 200_000.0 // tuned with an offset so the channel does not fall on the DC spike
         const val READ = 65536       // ~64 ms per measurement

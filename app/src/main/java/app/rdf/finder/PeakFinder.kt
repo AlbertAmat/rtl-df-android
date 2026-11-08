@@ -18,6 +18,11 @@ data class PeakInfo(
     val reliable: Boolean,
     /** Smoothed power per heading bin (NaN = no data), bin i covers [i*binDeg, (i+1)*binDeg). */
     val profile: DoubleArray = DoubleArray(0),
+    /** Width (°) of the contiguous main lobe within 3 dB of the peak. */
+    val lobeWidthDeg: Double = 0.0,
+    /** A second lobe within 3 dB of the main one, well away from it: typical of reflections (multipath). */
+    val multipath: Boolean = false,
+    val secondBearing: Double? = null,
 )
 
 /**
@@ -99,6 +104,18 @@ class PeakFinder(
         }
         val bearing = (Math.toDegrees(atan2(sx, sy)) + 360.0) % 360.0
         val coverage = filled.size * binDeg.toDouble()
+        // Multipath: a strong second lobe >= 45 deg away from the main one
+        val minSep = 45 / binDeg
+        var second: Int? = null
+        for (i in filled) {
+            val d = minOf((i - best + nBins) % nBins, (best - i + nBins) % nBins)
+            if (d < minSep) continue
+            // must be a local maximum, not just the shoulder of the main lobe
+            if (sm[(i - 1 + nBins) % nBins].let { !it.isNaN() && it > sm[i] }) continue
+            if (sm[(i + 1) % nBins].let { !it.isNaN() && it > sm[i] }) continue
+            if (second == null || sm[i] > sm[second]) second = i
+        }
+        val multi = second != null && sm[second] >= sm[best] - 3.0 && prominence >= minProminenceDb
         return PeakInfo(
             bearing = bearing,
             powerDb = sm[best],
@@ -106,6 +123,9 @@ class PeakFinder(
             coverageDeg = coverage,
             reliable = prominence >= minProminenceDb && coverage >= minCoverageDeg,
             profile = sm,
+            lobeWidthDeg = lobe.size * binDeg.toDouble(),
+            multipath = multi,
+            secondBearing = if (multi) (second!! + 0.5) * binDeg else null,
         )
     }
 }

@@ -13,6 +13,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import android.graphics.Bitmap
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxSize
@@ -215,6 +221,7 @@ fun Header(vm: MainViewModel) {
     val fix by vm.gps.fix.collectAsStateWithLifecycle()
     val connected by vm.sdrConnected.collectAsStateWithLifecycle()
     val mode by vm.mode.collectAsStateWithLifecycle()
+    val battery by vm.battery.collectAsStateWithLifecycle()
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 3.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -239,6 +246,7 @@ fun Header(vm: MainViewModel) {
             },
             NEUTRAL,
         )
+        battery?.let { Chip("BAT $it%", if (it <= 15) BAD else if (it <= 30) WARN else NEUTRAL) }
     }
 }
 
@@ -419,6 +427,50 @@ fun Spark(h: List<Float>, modifier: Modifier, line: Color, grid: Color) {
  * Polar plot of signal strength by true heading (north up): the filled shape is the power the app has
  * seen while the antenna was swept, the amber needle is where the antenna points now, the green line is the peak.
  */
+/** Rolling spectrum around the tuned channel (±128 kHz, newest row at the bottom): shows drift and neighbours. */
+@Composable
+fun Waterfall(spec: FloatArray?, modifier: Modifier) {
+    val bins = Tracker.SPEC_BINS
+    val rowsMax = 40
+    val rows = remember { ArrayDeque<FloatArray>() }
+    val bmp = remember { Bitmap.createBitmap(bins, rowsMax, Bitmap.Config.ARGB_8888) }
+    var tick by remember { mutableIntStateOf(0) }
+    val night = LocalTac.current.night
+    if (spec != null && (rows.isEmpty() || rows.last() !== spec)) {
+        rows.addLast(spec)
+        while (rows.size > rowsMax) rows.removeFirst()
+        val all = rows.flatMap { it.asIterable() }.sorted()
+        val lo = all[all.size / 10]
+        val hi = max(all[all.size - 1 - all.size / 200], lo + 15f)
+        val px = IntArray(bins * rowsMax)
+        val off = rowsMax - rows.size
+        rows.forEachIndexed { r, row ->
+            for (x in 0 until bins) {
+                val v = ((row[x] - lo) / (hi - lo)).coerceIn(0f, 1f)
+                val c = if (night) (v * 255).toInt().let { (0xFF shl 24) or (it shl 16) or ((it * 0.1f).toInt() shl 8) }
+                else {
+                    // black -> olive -> amber -> white
+                    val rr = (255 * minOf(1f, v * 1.6f)).toInt()
+                    val gg = (255 * (v * v * 1.2f).coerceIn(0f, 1f) * 0.85f + 20 * v).toInt().coerceIn(0, 255)
+                    val bb = (255 * ((v - 0.75f) * 4f).coerceIn(0f, 1f)).toInt()
+                    (0xFF shl 24) or (rr shl 16) or (gg shl 8) or bb
+                }
+                px[(off + r) * bins + x] = c
+            }
+        }
+        bmp.setPixels(px, 0, bins, 0, 0, bins, rowsMax)
+        tick++
+    }
+    val line = MaterialTheme.colorScheme.outline
+    Canvas(modifier.border(1.dp, MaterialTheme.colorScheme.outline)) {
+        @Suppress("UNUSED_EXPRESSION") tick
+        drawImage(
+            bmp.asImageBitmap(), dstSize = IntSize(size.width.toInt(), size.height.toInt()), filterQuality = FilterQuality.None,
+        )
+        drawLine(line, Offset(size.width / 2, 0f), Offset(size.width / 2, size.height), strokeWidth = 1f)
+    }
+}
+
 @Composable
 fun PolarPlot(peak: PeakInfo?, headingDeg: Double?, modifier: Modifier) {
     val ring = MaterialTheme.colorScheme.outlineVariant
@@ -588,7 +640,11 @@ fun ScanTab(vm: MainViewModel, goTrack: () -> Unit) {
     }
     scan.results.forEach { r ->
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(String.format(Locale.US, "%.4f", r.freqHz / 1e6), Modifier.weight(1.3f), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = ACCENT)
+            Column(Modifier.weight(1.3f)) {
+                Text(String.format(Locale.US, "%.4f", r.freqHz / 1e6), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = ACCENT)
+                val nm = vm.foxName(r.freqHz / 1e6)
+                if (nm.isNotBlank()) Text(nm, fontSize = 10.sp, color = MUTED, maxLines = 1)
+            }
             Text("${r.powerDb.roundToInt()}", Modifier.weight(0.8f), fontSize = 14.sp)
             Text("${r.snrDb.roundToInt()}", Modifier.weight(0.8f), fontSize = 14.sp)
             Text("${(r.activity * 100).roundToInt()}%", Modifier.weight(0.9f), fontSize = 14.sp)
@@ -616,6 +672,10 @@ fun TrackTab(vm: MainViewModel, holder: MapHolder) {
     val sdrInfo by vm.sdrInfo.collectAsStateWithLifecycle()
     val gainNow by vm.gainDb.collectAsStateWithLifecycle()
     val listening by vm.listen.collectAsStateWithLifecycle()
+    val atMinGain by vm.atMinGain.collectAsStateWithLifecycle()
+    val trend by vm.trend.collectAsStateWithLifecycle()
+    val burst by vm.burst.collectAsStateWithLifecycle()
+    val drift by vm.driftHz.collectAsStateWithLifecycle()
     val useSensor = vm.f("use_sensor") == "true"
 
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -645,6 +705,9 @@ fun TrackTab(vm: MainViewModel, holder: MapHolder) {
         }
     }
 
+    val trkMhz = vm.f("trk_freq").replace(',', '.').toDoubleOrNull()
+    if (trkMhz != null) NumField(vm, vm.foxKey(trkMhz), "Fox name / notes (saved for this frequency)", Modifier.fillMaxWidth(), KeyboardType.Text)
+
     val peak by vm.peak.collectAsStateWithLifecycle()
     Panel(Modifier.fillMaxWidth()) {
         Row(Modifier.padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -665,11 +728,61 @@ fun TrackTab(vm: MainViewModel, holder: MapHolder) {
                     color = if ((live.snrDb ?: 0.0) >= 6.0) OK else MUTED,
                 )
                 Text("10 s peak ${live.peakDb?.let { f1(it) } ?: "--"} dB", fontSize = 12.sp, color = MUTED)
-                if (live.clipping) Text("⚠ CLIPPING · − ATT", color = BAD, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                if (vm.f("pwr_norm") == "true") {
+                    val n = (live.smoothDb ?: live.powerDb)?.let {
+                        PowerNorm.normalized(it, live.gainDb, vm.f("pwr_offset").replace(',', '.').toDoubleOrNull() ?: 0.0)
+                    }
+                    Text("NORM ${n?.let { f1(it) } ?: "--"} dB @30 dB gain", fontSize = 12.sp, color = MUTED)
+                }
+                if (live.clipping && atMinGain) {
+                    Text("⚠ MIN GAIN: ADD AN EXTERNAL ATTENUATOR (10–20 dB) OR MOVE BACK", color = BAD, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                } else if (live.clipping) {
+                    Text("⚠ CLIPPING · − ATT", color = BAD, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
             }
             PolarPlot(peak, heading.trueDeg, Modifier.size(150.dp))
         }
-        Spark(live.history, Modifier.fillMaxWidth().padding(horizontal = 8.dp).padding(bottom = 8.dp).height(40.dp), OK, MaterialTheme.colorScheme.outlineVariant)
+        Spark(live.history, Modifier.fillMaxWidth().padding(horizontal = 8.dp).height(40.dp), OK, MaterialTheme.colorScheme.outlineVariant)
+        Waterfall(live.spectrum, Modifier.fillMaxWidth().padding(8.dp).height(56.dp))
+    }
+
+    // Fox status: hotter/colder, burst timing, carrier drift
+    if (mode == Mode.Track) {
+        Panel(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        when (trend) {
+                            Trend.HOTTER -> "▲ HOTTER"
+                            Trend.COLDER -> "▼ COLDER"
+                            Trend.STEADY -> "● STEADY"
+                            null -> "· · ·"
+                        },
+                        Modifier.weight(1f), fontSize = 18.sp, fontWeight = FontWeight.Bold,
+                        color = when (trend) { Trend.HOTTER -> OK; Trend.COLDER -> BAD; else -> MUTED },
+                    )
+                    val coach = vm.f("coach") == "true"
+                    if (coach) TacButton(onClick = { vm.setCoach(false) }) { Text("VOICE ON", fontSize = 12.sp) }
+                    else TacOutlinedButton(onClick = { vm.setCoach(true) }) { Text("VOICE OFF", fontSize = 12.sp) }
+                }
+                burst?.let { b ->
+                    Text(
+                        "TIMED FOX · every ${b.periodS.roundToInt()} s" + (if (b.onS > 0) ", on ~${b.onS.roundToInt()} s" else "") +
+                            " · " + (if (b.onAir) "ON AIR" else "next in ${b.nextInS?.roundToInt() ?: 0} s"),
+                        fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (b.onAir) OK else WARN,
+                    )
+                }
+                drift?.let { d ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            String.format(Locale.US, "CARRIER %+.1f kHz from the tuned frequency", d / 1000.0),
+                            Modifier.weight(1f), fontSize = 12.sp, color = if (kotlin.math.abs(d) > 1500) WARN else MUTED,
+                        )
+                        if (kotlin.math.abs(d) > 1500) TacOutlinedButton(onClick = { vm.retuneToDrift() }) { Text("RETUNE", fontSize = 12.sp) }
+                    }
+                }
+            }
+        }
     }
 
     // Close to the emitter the front end overloads: step the tuner gain down (or let it do so by itself)
@@ -745,6 +858,14 @@ fun TrackTab(vm: MainViewModel, holder: MapHolder) {
                         "PEAK ${pk.bearing.roundToInt()}° true · +${f1(pk.prominenceDb)} dB over average",
                         fontSize = 16.sp, fontWeight = FontWeight.Bold, color = if (pk.reliable) OK else WARN,
                     )
+                    if (pk.multipath) {
+                        Text(
+                            "⚠ MULTIPATH? A second lobe at ${pk.secondBearing?.roundToInt()}° is within 3 dB: reflections likely. Take fixes from other places and trust the crossing.",
+                            fontSize = 12.sp, color = WARN, fontWeight = FontWeight.Bold,
+                        )
+                    } else if (pk.lobeWidthDeg > 120) {
+                        Text("Wide lobe (${pk.lobeWidthDeg.roundToInt()}°): lower the gain to sharpen the peak.", fontSize = 12.sp, color = WARN)
+                    }
                     Text(
                         if (pk.reliable) "Point the Yagi at ${pk.bearing.roundToInt()}° and record, or record at the peak directly."
                         else "Not reliable yet (${pk.coverageDeg.roundToInt()}° covered): sweep a wider arc past the lobe.",
@@ -781,7 +902,10 @@ fun TrackTab(vm: MainViewModel, holder: MapHolder) {
                     modifier = Modifier.weight(1.4f),
                 ) { Text(if (listening) "■ STOP LISTENING" else "▶ LISTEN", fontSize = 14.sp, fontWeight = FontWeight.Bold) }
                 TacOutlinedButton(
-                    onClick = { vm.setField("listen_mode", if (vm.f("listen_mode") == "AM") "NFM" else "AM") },
+                    onClick = {
+                        val order = listOf("NFM", "AM", "USB", "LSB", "CW")
+                        vm.setField("listen_mode", order[(order.indexOf(vm.f("listen_mode")) + 1) % order.size])
+                    },
                     modifier = Modifier.weight(0.6f),
                 ) { Text(vm.f("listen_mode"), fontSize = 14.sp, fontWeight = FontWeight.Bold) }
             }
@@ -792,14 +916,15 @@ fun TrackTab(vm: MainViewModel, holder: MapHolder) {
         }
     }
 
-    EstimateCard(data, holder)
+    EstimateCard(vm, data, holder)
     PointsList(vm, data)
 }
 
 @Composable
-fun EstimateCard(data: SessionData, holder: MapHolder) {
+fun EstimateCard(vm: MainViewModel, data: SessionData, holder: MapHolder) {
     if (data.points.isEmpty()) return
     val ctx = LocalContext.current
+    val fix by vm.gps.fix.collectAsStateWithLifecycle()
     Panel(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             val e = data.estimate
@@ -823,6 +948,26 @@ fun EstimateCard(data: SessionData, holder: MapHolder) {
                     )
                 }
                 e.warnings.forEach { Text("⚠ $it", color = WARN, fontSize = 13.sp) }
+                fix?.let { me ->
+                    val (d, b) = FieldGuide.distBearing(me.lat, me.lon, e.lat, e.lon)
+                    Text(
+                        String.format(Locale.US, "TARGET %s at %.0f° %s", if (d >= 1000) "%.2f km".format(Locale.US, d / 1000) else "%.0f m".format(Locale.US, d), b, FieldGuide.compass8(b)),
+                        fontSize = 16.sp, fontWeight = FontWeight.Bold, color = OK,
+                    )
+                    val next = FieldGuide.nextFix(data.points.map { Geo.Ray(it.lat, it.lon, it.bearingTrue) }, e.lat, e.lon, me.lat, me.lon)
+                    if (next != null && d > 40) {
+                        Text(
+                            String.format(
+                                Locale.US, "Next fix: %.0f m at %.0f° %s (crosses the earlier views at %.0f°)",
+                                next.distFromMeM, next.bearingFromMe, FieldGuide.compass8(next.bearingFromMe), next.angleDeg,
+                            ),
+                            fontSize = 12.sp, color = MUTED,
+                        )
+                        TacOutlinedButton(onClick = { openInMaps(ctx, next.lat, next.lon) }, modifier = Modifier.fillMaxWidth()) {
+                            Text("OPEN NEXT FIX IN MAPS", fontSize = 12.sp)
+                        }
+                    }
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TacOutlinedButton(
                         onClick = {
@@ -848,7 +993,8 @@ fun PointsList(vm: MainViewModel, data: SessionData) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(
-                    "#${i + 1} · bearing ${p.bearingTrue.roundToInt()}° · ${f1(p.powerDb)} dB · SNR ${p.snrDb?.roundToInt() ?: "?"}",
+                    "#${i + 1} · ${p.bearingTrue.roundToInt()}° · ${f1(p.powerDb)} dB · SNR ${p.snrDb?.roundToInt() ?: "?"} · Q ${FixQuality.percent(p.snrDb, p.accM)}%" +
+                        if (p.tsSrc == "import") " · imported" else "",
                     fontSize = 14.sp,
                 )
                 Text(
@@ -914,8 +1060,14 @@ fun SessionsTab(vm: MainViewModel) {
         }
     }
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        TacButton(onClick = { vm.export(ctx, true) }, enabled = cur != null, modifier = Modifier.weight(1f)) { Text("SHARE CSV") }
-        TacButton(onClick = { vm.export(ctx, false) }, enabled = cur != null, modifier = Modifier.weight(1f)) { Text("SHARE GEOJSON") }
+        TacButton(onClick = { vm.export(ctx, MainViewModel.Format.CSV) }, enabled = cur != null, modifier = Modifier.weight(1f)) { Text("CSV", fontSize = 12.sp) }
+        TacButton(onClick = { vm.export(ctx, MainViewModel.Format.GEOJSON) }, enabled = cur != null, modifier = Modifier.weight(1f)) { Text("GEOJSON", fontSize = 12.sp) }
+        TacButton(onClick = { vm.export(ctx, MainViewModel.Format.KML) }, enabled = cur != null, modifier = Modifier.weight(1f)) { Text("KML", fontSize = 12.sp) }
+        TacButton(onClick = { vm.export(ctx, MainViewModel.Format.GPX) }, enabled = cur != null, modifier = Modifier.weight(1f)) { Text("GPX", fontSize = 12.sp) }
+    }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.importFixes(ctx, uri) }
+    TacOutlinedButton(onClick = { picker.launch(arrayOf("text/*", "application/octet-stream")) }, modifier = Modifier.fillMaxWidth()) {
+        Text("IMPORT FIXES FROM ANOTHER OPERATOR (CSV)", fontSize = 12.sp)
     }
     if (confirm && cur != null) {
         AlertDialog(
@@ -987,6 +1139,15 @@ fun SettingsTab(vm: MainViewModel, holder: MapHolder) {
     )
     SwitchRow("Night mode (red display, keeps night vision)", vm.f("night_mode") == "true") { vm.setField("night_mode", it.toString()) }
 
+    Text("Power display", fontWeight = FontWeight.Bold)
+    SwitchRow("Gain-compensated power (compare readings at different gains)", vm.f("pwr_norm") == "true") { vm.setField("pwr_norm", it.toString()) }
+    NumField(vm, "pwr_offset", "Calibration offset (dB, e.g. from a known source)", Modifier.fillMaxWidth())
+    Text(
+        "Shows power as if the tuner gain were 30 dB. It assumes the R820T gain steps are accurate, so treat it as approximate.",
+        fontSize = 12.sp,
+        color = MUTED,
+    )
+
     Text("Offline map", fontWeight = FontWeight.Bold)
     Text(
         "Frame your work area on the map and tap download. Tiles are stored on the phone. " +
@@ -998,12 +1159,23 @@ fun SettingsTab(vm: MainViewModel, holder: MapHolder) {
         NumField(vm, "dl_zmin", "Min zoom", Modifier.weight(1f), KeyboardType.Number)
         NumField(vm, "dl_zmax", "Max zoom", Modifier.weight(1f), KeyboardType.Number)
     }
-    TacButton(onClick = { downloadArea(ctx, holder, vm) }, modifier = Modifier.fillMaxWidth()) {
-        Text("DOWNLOAD VISIBLE AREA")
+    val dl by vm.download.collectAsStateWithLifecycle()
+    dl?.let { (done, total) ->
+        Text("Downloading $done / $total tiles", fontSize = 12.sp, color = ACCENT)
+        LinearProgressIndicator(progress = { done.toFloat() / total }, Modifier.fillMaxWidth(), color = ACCENT)
+    }
+    val fix by vm.gps.fix.collectAsStateWithLifecycle()
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        TacButton(onClick = { downloadArea(ctx, holder, vm, null) }, modifier = Modifier.weight(1f)) {
+            Text("VISIBLE AREA", fontSize = 12.sp)
+        }
+        TacButton(onClick = { downloadArea(ctx, holder, vm, fix) }, enabled = fix != null, modifier = Modifier.weight(1f)) {
+            Text("AROUND ME (3 km)", fontSize = 12.sp)
+        }
     }
 }
 
-private fun downloadArea(ctx: Context, holder: MapHolder, vm: MainViewModel) {
+private fun downloadArea(ctx: Context, holder: MapHolder, vm: MainViewModel, around: GpsFix?) {
     val map = holder.map
     if (map == null) {
         vm.postMessage("The map is not ready yet")
@@ -1016,21 +1188,28 @@ private fun downloadArea(ctx: Context, holder: MapHolder, vm: MainViewModel) {
         vm.postMessage("Invalid zoom (1–$maxZ for this map style, min ≤ max)")
         return
     }
-    val box = map.boundingBox
+    val box = if (around == null) map.boundingBox else {
+        val dLat = 1500.0 / 111_320.0
+        val dLon = dLat / kotlin.math.cos(Math.toRadians(around.lat))
+        org.osmdroid.util.BoundingBox(around.lat + dLat, around.lon + dLon, around.lat - dLat, around.lon - dLon)
+    }
     val cm = CacheManager(map)
-    val total = cm.possibleTilesInArea(box, zmin, zmax)
+    var zTop = zmax
+    // around the user's position the area is fixed, so lower the top zoom until it fits the tile cap
+    while (around != null && zTop > zmin && cm.possibleTilesInArea(box, zmin, zTop) > 2000) zTop--
+    val total = cm.possibleTilesInArea(box, zmin, zTop)
     if (total > 2000) {
         vm.postMessage("Too many tiles ($total > 2000): zoom the map in or lower the max zoom")
         return
     }
     vm.postMessage("Downloading $total tiles…")
     cm.downloadAreaAsync(
-        ctx, box, zmin, zmax,
+        ctx, box, zmin, zTop,
         object : CacheManager.CacheManagerCallback {
-            override fun onTaskComplete() = vm.postMessage("Map downloaded")
-            override fun onTaskFailed(errors: Int) = vm.postMessage("Download finished with $errors errors")
-            override fun updateProgress(progress: Int, currentZoomLevel: Int, zoomMin: Int, zoomMax: Int) {}
-            override fun downloadStarted() {}
+            override fun onTaskComplete() { vm.clearDownload(); vm.postMessage("Map downloaded") }
+            override fun onTaskFailed(errors: Int) { vm.clearDownload(); vm.postMessage("Download finished with $errors errors") }
+            override fun updateProgress(progress: Int, currentZoomLevel: Int, zoomMin: Int, zoomMax: Int) = vm.setDownload(progress, total)
+            override fun downloadStarted() = vm.setDownload(0, total)
             override fun setPossibleTilesInArea(total: Int) {}
         },
     )
