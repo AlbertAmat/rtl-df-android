@@ -4,7 +4,13 @@
     <!-- INTERNET: also required for the local rtl_tcp socket (127.0.0.1) and for downloading maps -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
     <uses-feature android:name="android.hardware.sensor.compass" android:required="false" />
@@ -16,6 +22,7 @@
 
     <application
         android:allowBackup="false"
+        android:icon="@drawable/ic_launcher"
         android:label="RDF"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
 
@@ -29,6 +36,15 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".CaptureService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse|location">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps SDR capture and GPS alive while the app is in the background" />
+        </service>
 
         <provider
             android:name="androidx.core.content.FileProvider"

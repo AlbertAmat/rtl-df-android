@@ -2,6 +2,7 @@ package app.rdf.finder
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.WindowManager
@@ -17,8 +18,9 @@ class MainActivity : ComponentActivity() {
     private val vm: MainViewModel by viewModels()
 
     private val permLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) vm.startSensors(true) else vm.postMessage("Location permission denied: no GPS")
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            // GPS_PROVIDER needs FINE; on Android 12+ the user may grant only approximate (COARSE)
+            if (hasLocation()) vm.startSensors(true) else vm.postMessage("Precise location permission denied: no GPS")
         }
 
     private fun hasLocation() =
@@ -29,7 +31,13 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) // capture stops if the screen turns off
         configureOsmdroid()
-        if (!hasLocation()) permLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+        if (!hasLocation()) permLauncher.launch(
+            buildList {
+                add(Manifest.permission.ACCESS_FINE_LOCATION)
+                add(Manifest.permission.ACCESS_COARSE_LOCATION)
+                if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
+            }.toTypedArray(),
+        )
         setContent { RdfApp(vm) }
     }
 
@@ -40,7 +48,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
-        vm.stopSensors()
+        if (vm.mode.value == Mode.Idle) vm.stopSensors() // keep GPS/compass while capturing in the background
     }
 
     /** Volume keys record a point (touching the screen moves the antenna). */

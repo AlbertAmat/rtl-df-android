@@ -20,6 +20,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Instant
 import kotlin.math.abs
+import java.util.Locale
 import kotlin.math.roundToInt
 
 enum class Mode { Idle, Scan, Track }
@@ -111,6 +112,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             gps.fix.collect { fix -> if (fix != null) declination = GpsProvider.declination(fix) }
         }
         viewModelScope.launch {
+            // Foreground service while capturing, so Android doesn't kill the SDR socket in the background
+            mode.collect { m ->
+                val ctx = getApplication<Application>()
+                if (m == Mode.Idle) CaptureService.stop(ctx) else CaptureService.start(ctx)
+            }
+        }
+        viewModelScope.launch {
             // Pitch follows SNR: higher pitch = stronger signal
             live.collect { l ->
                 val snr = l.snrDb
@@ -126,6 +134,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun postMessage(s: String) = msg(s)
+
+    private fun f1(v: Double) = String.format(Locale.US, "%.6f", v).trimEnd('0').trimEnd('.')
 
     private fun norm(x: Double) = ((x % 360.0) + 360.0) % 360.0
 
@@ -187,10 +197,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             msg("SDR not connected: tap \"Connect SDR\"")
             return
         }
-        sdr.settleMs = (fd("sdr_settle") ?: 80.0).toInt().coerceIn(20, 1000)
-        sdr.ppm = (fd("sdr_ppm") ?: 0.0).toInt()
+        val settle = (fd("sdr_settle") ?: 80.0).toInt().coerceIn(20, 1000)
+        val ppm = (fd("sdr_ppm") ?: 0.0).toInt()
         viewModelScope.launch {
             job?.cancelAndJoin()
+            sdr.settleMs = settle // applied only once the previous job has stopped using the SDR
+            sdr.ppm = ppm
             _mode.value = newMode
             job = viewModelScope.launch(Dispatchers.Default) {
                 try {
@@ -335,6 +347,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             val warn = ArrayList<String>()
             if (meas.snrDb < 6) warn.add("Low SNR (${meas.snrDb.roundToInt()} dB): this may not be the target transmission")
+            fix.accM?.let { if (it > 25f) warn.add("Poor GPS accuracy (±${it.roundToInt()} m)") }
             if (meas.clipping) warn.add("Signal clipping: lower the gain")
             if (useSensor && compass.accuracy.value < 2) warn.add("Compass not calibrated: move the phone in a figure 8")
             msg(if (warn.isEmpty()) "Point recorded · bearing ${bearingTrue.roundToInt()}°" else "⚠ " + warn.joinToString(" · "))
@@ -363,6 +376,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun selectSession(id: Long) {
         currentSessionId = id
+        db.getSession(id)?.let { setField("trk_freq", f1(it.freqHz / 1e6)) }
         refreshSession()
     }
 

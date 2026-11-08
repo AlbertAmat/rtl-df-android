@@ -49,6 +49,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -67,6 +68,7 @@ import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import java.util.Locale
+import kotlinx.coroutines.flow.collectLatest
 import kotlin.math.roundToInt
 
 private val OK = Color(0xFF1B4D2A)
@@ -88,7 +90,8 @@ fun RdfApp(vm: MainViewModel) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             val holder = remember { MapHolder() }
             val snackbar = remember { SnackbarHostState() }
-            LaunchedEffect(Unit) { vm.messages.collect { snackbar.showSnackbar(it) } }
+            // collectLatest cancels the snackbar being shown: the newest message wins, none queue up
+            LaunchedEffect(Unit) { vm.messages.collectLatest { snackbar.showSnackbar(it) } }
 
             Scaffold(
                 snackbarHost = { SnackbarHost(snackbar) },
@@ -97,7 +100,7 @@ fun RdfApp(vm: MainViewModel) {
                 var tab by rememberSaveable { mutableIntStateOf(0) }
                 Column(Modifier.padding(pad).fillMaxSize()) {
                     Header(vm)
-                    Box(Modifier.weight(0.36f).fillMaxWidth()) { MapPane(vm, holder) }
+                    Box(Modifier.weight(0.36f).fillMaxWidth().clipToBounds()) { MapPane(vm, holder) }
                     TabRow(selectedTabIndex = tab) {
                         listOf("Scan", "Track", "Sessions", "Settings").forEachIndexed { i, t ->
                             Tab(selected = tab == i, onClick = { tab = i }, text = { Text(t, fontSize = 13.sp) })
@@ -131,6 +134,7 @@ fun Chip(text: String, color: Color) {
 @Composable
 fun Header(vm: MainViewModel) {
     val gpsValid by vm.gpsValid.collectAsStateWithLifecycle()
+    val gpsEnabled by vm.gps.enabled.collectAsStateWithLifecycle()
     val fix by vm.gps.fix.collectAsStateWithLifecycle()
     val connected by vm.sdrConnected.collectAsStateWithLifecycle()
     val mode by vm.mode.collectAsStateWithLifecycle()
@@ -141,7 +145,14 @@ fun Header(vm: MainViewModel) {
     ) {
         val acc = fix?.accM?.roundToInt()?.toString() ?: "?"
         val sats = fix?.sats?.toString() ?: "?"
-        Chip(if (gpsValid) "GPS ±$acc m · $sats sat" else "GPS: no fix", if (gpsValid) OK else BAD)
+        Chip(
+            when {
+                !gpsEnabled -> "GPS off: enable location"
+                gpsValid -> "GPS ±$acc m · $sats sat"
+                else -> "GPS: no fix"
+            },
+            if (gpsValid) OK else BAD,
+        )
         Chip(if (connected) "SDR connected" else "SDR disconnected", if (connected) OK else BAD)
         Chip(
             when (mode) {
@@ -503,7 +514,7 @@ fun PointsList(vm: MainViewModel, data: SessionData) {
                     fontSize = 14.sp,
                 )
                 Text(
-                    String.format(Locale.US, "%.5f, %.5f · %s", p.lat, p.lon, p.ts.takeLast(9).dropLast(1)),
+                    String.format(Locale.US, "%.5f, %.5f · %s UTC", p.lat, p.lon, p.ts.substringAfter('T').take(8)),
                     fontSize = 11.sp,
                     color = Color.Gray,
                 )

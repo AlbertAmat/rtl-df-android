@@ -1,5 +1,11 @@
 # rtl-df-android · Radio direction finding for Android (Kotlin)
 
+<p align="center">
+  <img src="docs/demo.gif" alt="Demo: scan, track a carrier, record three bearings and see the estimated emitter on the map" width="300">
+</p>
+
+<p align="center"><sub>Demo recorded on the Android emulator against a synthetic <code>rtl_tcp</code> source (see <a href="#try-it-without-hardware">Try it without hardware</a>): scan 400–470 MHz, track 446.100 MHz, record three bearings from three positions, and the emitter is located (residual 4 m on synthetic data).</sub></p>
+
 Android app for locating transmitters with a Yagi antenna. The phone is mounted on the Yagi and acts as screen, GPS and compass; the RTL-SDR connects over USB OTG and is served by the **SDR driver** app (`rtl_tcp` on `127.0.0.1:1234`).
 
 **Workflow**
@@ -8,15 +14,37 @@ Android app for locating transmitters with a Yagi antenna. The phone is mounted 
 3. **Record point** (button or **volume key**): stores GPS position, time (GPS time), frequency, power, SNR, gain and bearing. The bearing comes from the phone compass, with magnetic declination computed automatically from the GPS position.
 4. With 2 or more points it computes the emitter position (intersection / least squares) and draws it on the map together with the rays.
 
+## Screenshots
+
+| Scan | Track | Estimate |
+|:---:|:---:|:---:|
+| <img src="docs/screenshots/scan.png" width="240"> | <img src="docs/screenshots/track.png" width="240"> | <img src="docs/screenshots/estimate.png" width="240"> |
+| Sweep result: emitters with level, SNR and activity | Live power, graph, and bearing entry | Estimated emitter, rays and recorded points |
+
+| Map with rays | Sessions | Settings |
+|:---:|:---:|:---:|
+| <img src="docs/screenshots/points.png" width="240"> | <img src="docs/screenshots/sessions.png" width="240"> | <img src="docs/screenshots/settings.png" width="240"> |
+| Numbered points, bearing rays and the emitter | Hunts, CSV and GeoJSON export | SDR connection and phone mounting |
+
 ## Build and install
 1. Recent Android Studio (Ladybug or newer). **File → Open** and pick this folder; wait for the Gradle *Sync* (it downloads dependencies, so internet is needed once).
 2. If Studio offers to upgrade AGP/Kotlin/Compose you can accept; the pinned versions are a known compatible set (AGP 8.7.3, Gradle 8.9, Kotlin 2.0.21).
 3. Connect the phone with USB debugging and press **Run**, or **Build → Build APK(s)**.
 
+From the command line (needs the Android SDK, e.g. `ANDROID_HOME` or a `local.properties` with `sdk.dir`):
+
+```
+./gradlew test            # JVM tests
+./gradlew assembleDebug   # app/build/outputs/apk/debug/app-debug.apk
+./gradlew lintDebug
+```
+
 ## First use
 1. Open **SDR driver**, plug in the RTL-SDR (accept the USB permission) and tap **Start** (host `127.0.0.1`, port `1234`).
 2. Open this app and grant the location permission. In **Track** tap **Connect SDR** (there is also a button to open SDR driver).
 3. Go to **Scan** → **Start scan**.
+
+While a scan or track is running the app shows an ongoing notification (a foreground service), so Android keeps capture and GPS alive if you switch to SDR driver or lock the screen.
 
 Tips: enable **airplane mode** in the field (GPS keeps working and the phone radios will not interfere with the RTL-SDR), and keep the screen on: the app holds it awake because capture stops if the screen turns off.
 
@@ -36,9 +64,24 @@ Frame your work area on the map and, in **Settings → Offline map**, tap **Down
 - Empty gain or `auto` = tuner AGC. When tracking, start around 30 dB and lower it if "Signal clipping" shows up. Powers are relative dBFS (uncalibrated): good for comparing points taken with the same gain.
 
 ## Verification status
-- The core logic (`rtl_tcp` client, DSP, scanner, tracker, geometry) compiles with Kotlin 2.0.21 and passes 11 JVM tests against a fake `rtl_tcp` server (`app/src/test`): it detects carriers to within ±3 kHz, measures SNR and locates the emitter to within metres on synthetic data.
-- **The Android part (Compose UI, sensors, GPS, osmdroid, database) has not been compiled or tested yet** (it was generated in an environment with no Android SDK or Maven access). If Gradle reports compile errors or the app misbehaves on a phone, those are the first things to fix.
-- It has not been tested with a real RTL-SDR: the settle time and the behaviour of SDR driver may need tuning.
+- `./gradlew test assembleDebug lintDebug` pass (Gradle 8.9, AGP 8.7.3, Kotlin 2.0.21, compileSdk 35): no compile errors, no Kotlin warnings, no lint errors.
+- The core logic (`rtl_tcp` client, DSP, scanner, tracker, geometry) passes 11 JVM tests against a fake `rtl_tcp` server (`app/src/test`): it detects carriers to within ±3 kHz, measures SNR and locates the emitter to within metres on synthetic data.
+- The whole app was run on an Android 14 emulator against a synthetic `rtl_tcp` source: connect, scan (5 of 5 synthetic emitters found), track, record three points with mock GPS, estimate and map overlays, sessions and settings. The osmdroid map loads tiles and draws the rays correctly.
+- **Not tested on real hardware:** a real RTL-SDR with SDR driver, the phone compass on a Yagi (the emulator demo uses typed bearings), real GPS, USB OTG behaviour, and the offline tile download. The settle time and the behaviour of SDR driver may need tuning.
+
+## Try it without hardware
+`tools/fake_rtl_tcp.py` is a small `rtl_tcp` server that streams synthetic carriers (433.920, 446.0625, 446.100, 462.5625 and 410.150 MHz). With the emulator running:
+
+```
+python3 tools/fake_rtl_tcp.py 1234 /tmp/level      # optional file with a 0..1 level for the 446.100 MHz carrier
+```
+
+In the app, set **Settings → SDR driver connection → Host** to `10.0.2.2` (the emulator's alias for the host machine), then **Connect SDR** in the Track tab. Mock GPS positions come from `adb emu geo fix <lon> <lat>`; switch off **Use the phone compass** and type the bearings. Changing the level file while tracking simulates sweeping the antenna.
+
+## Known limitations
+- No automatic SDR reconnection: if the socket drops, tap **Connect SDR** again.
+- The compass "not calibrated" warning relies on the sensor's reported accuracy, which some phones report poorly for the rotation vector.
+- Offline map downloads show start and end messages but no progress bar.
 
 ## Structure
 | File | Purpose |
@@ -50,6 +93,8 @@ Frame your work area on the map and, in **Settings → Offline map**, tap **Down
 | `Geo.kt` | intersection / least squares of bearings |
 | `Sensors.kt` | GPS (LocationManager), compass (rotation vector), declination |
 | `Db.kt`, `Export.kt` | SQLite, shareable CSV and GeoJSON |
+| `CaptureService.kt` | foreground service that keeps capture and GPS alive in the background |
+| `tools/fake_rtl_tcp.py` | synthetic `rtl_tcp` source for demos and emulator testing |
 | `MainViewModel.kt`, `Ui.kt`, `MapOverlays.kt`, `MainActivity.kt` | state, Compose UI, map, volume keys |
 
 JVM tests: `./gradlew test` (or *Run tests* in Android Studio).

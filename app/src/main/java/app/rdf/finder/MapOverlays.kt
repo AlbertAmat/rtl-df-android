@@ -64,7 +64,13 @@ object MapOverlays {
         map.invalidate()
     }
 
-    private fun dot(ctx: Context, color: Int, sizeDp: Int, label: String?): BitmapDrawable {
+    private val dotCache = HashMap<Triple<Int, Int, String?>, Bitmap>()
+
+    /** Markers are redrawn at every GPS fix: reuse the bitmaps instead of painting new ones. */
+    private fun dot(ctx: Context, color: Int, sizeDp: Int, label: String?): BitmapDrawable =
+        BitmapDrawable(ctx.resources, dotCache.getOrPut(Triple(color, sizeDp, label)) { paintDot(ctx, color, sizeDp, label) })
+
+    private fun paintDot(ctx: Context, color: Int, sizeDp: Int, label: String?): Bitmap {
         val d = ctx.resources.displayMetrics.density
         val s = (sizeDp * d).toInt()
         val bmp = Bitmap.createBitmap(s, s, Bitmap.Config.ARGB_8888)
@@ -81,6 +87,6 @@ object MapOverlays {
             p.isFakeBoldText = true
             c.drawText(label, s / 2f, s / 2f - (p.descent() + p.ascent()) / 2f, p)
         }
-        return BitmapDrawable(ctx.resources, bmp)
+        return bmp
     }
 }

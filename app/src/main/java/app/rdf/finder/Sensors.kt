@@ -35,6 +35,10 @@ class GpsProvider(ctx: Context) : LocationListener {
     private val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as LocationManager
     private val _fix = MutableStateFlow<GpsFix?>(null)
     val fix: StateFlow<GpsFix?> = _fix
+    private val _enabled = MutableStateFlow(true)
+
+    /** False when the GPS provider is switched off in the phone's location settings. */
+    val enabled: StateFlow<Boolean> = _enabled
     private var started = false
 
     @SuppressLint("MissingPermission")
@@ -42,6 +46,7 @@ class GpsProvider(ctx: Context) : LocationListener {
         if (started) return
         try {
             lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, this, Looper.getMainLooper())
+            _enabled.value = lm.isProviderEnabled(LocationManager.GPS_PROVIDER)
             started = true
         } catch (e: SecurityException) {
             started = false
@@ -69,7 +74,7 @@ class GpsProvider(ctx: Context) : LocationListener {
             alt = l.altitude,
             accM = if (l.hasAccuracy()) l.accuracy else null,
             timeMs = l.time,
-            sats = l.extras?.getInt("satellites"),
+            sats = l.extras?.takeIf { it.containsKey("satellites") }?.getInt("satellites"),
             elapsedMs = SystemClock.elapsedRealtime(),
         )
     }
@@ -80,8 +85,13 @@ class GpsProvider(ctx: Context) : LocationListener {
     override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {
     }
 
-    override fun onProviderEnabled(provider: String) {}
-    override fun onProviderDisabled(provider: String) {}
+    override fun onProviderEnabled(provider: String) {
+        if (provider == LocationManager.GPS_PROVIDER) _enabled.value = true
+    }
+
+    override fun onProviderDisabled(provider: String) {
+        if (provider == LocationManager.GPS_PROVIDER) _enabled.value = false
+    }
 
     companion object {
         /** Magnetic declination (degrees, east positive) for the given position. */
@@ -109,7 +119,7 @@ class HeadingProvider(ctx: Context) : SensorEventListener {
     private val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as SensorManager
     private val sensor: Sensor? = sm.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
     private val rot = FloatArray(9)
-    private val hist = ArrayDeque<Triple<Long, Double, Double>>() // (ms, sen, cos)
+    private val hist = ArrayDeque<Triple<Long, Double, Double>>() // (ms, sin, cos)
     private val lock = Any()
     private var sinAvg = 0.0
     private var cosAvg = 0.0
