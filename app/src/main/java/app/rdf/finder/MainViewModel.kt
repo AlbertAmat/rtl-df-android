@@ -68,6 +68,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val tracker = Tracker()
     private val db = RdfDb(app)
     private val beeper = Beeper()
+    private val voice = VoiceListener(client)
     val gps = GpsProvider(app)
     val compass = HeadingProvider(app)
 
@@ -89,6 +90,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val session: StateFlow<SessionData> = _session.asStateFlow()
     private val _sessions = MutableStateFlow<List<SessionRow>>(emptyList())
     val sessions: StateFlow<List<SessionRow>> = _sessions.asStateFlow()
+    private val _listen = MutableStateFlow(false)
+    val listen: StateFlow<Boolean> = _listen.asStateFlow()
+    private val _gainDb = MutableStateFlow<Double?>(null)
+    /** Current tuner gain in dB (null = AGC), updated live while tracking. */
+    val gainDb: StateFlow<Double?> = _gainDb.asStateFlow()
+    private var lastAutoAtt = 0L
     private val _sound = MutableStateFlow(false)
     val sound: StateFlow<Boolean> = _sound.asStateFlow()
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 16)
@@ -105,6 +112,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 delay(200)
                 _sdrConnected.value = client.connected
                 _gpsValid.value = gps.isValid()
+                _gainDb.value = sdr.gainDb
                 updateHeading()
             }
         }
@@ -116,14 +124,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             mode.collect { m ->
                 val ctx = getApplication<Application>()
                 if (m == Mode.Idle) CaptureService.stop(ctx) else CaptureService.start(ctx)
+                if (m != Mode.Track) stopListen()
             }
         }
         viewModelScope.launch {
             // Pitch follows SNR: higher pitch = stronger signal
             live.collect { l ->
                 val snr = l.snrDb
+                // squelch opens on the measured SNR of the tracked channel
+                voice.demod.squelchOpen = snr != null && snr > (fd("listen_sql") ?: 6.0)
+                voice.demod.volume = ((fd("listen_vol") ?: 100.0) / 100.0).coerceIn(0.0, 4.0).toFloat()
+                voice.demod.mode = if (f("listen_mode") == "AM") Demod.Mode.AM else Demod.Mode.NFM
+                if (f("auto_att") == "true" && l.running && l.clipping) autoAttenuate()
                 beeper.freqHz =
-                    if (_sound.value && l.running && snr != null && snr > 3) 250.0 + (snr / 40.0).coerceIn(0.0, 1.0) * 1250.0
+                    if (_sound.value && !_listen.value && l.running && snr != null && snr > 3) 250.0 + (snr / 40.0).coerceIn(0.0, 1.0) * 1250.0
                     else 0.0
             }
         }
@@ -258,6 +272,58 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             withContext(Dispatchers.IO) { ensureSession(freq) }
             tracker.run(sdr, freq, bw * 1e3, g, _live)
         }
+    }
+
+    // ------------------------------------------------------------ gain / attenuation
+    /** One gain step up (+1) or down (-1) on the tuner's real gain table; applied live while tracking. */
+    fun stepGain(dir: Int, n: Int = 1) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val steps = sdr.gainSteps()
+            val cur = sdr.gainDb ?: gain("trk_gain") ?: steps[steps.size / 2]
+            val i = steps.indices.minByOrNull { abs(steps[it] - cur) } ?: 0
+            val next = steps[(i + dir * n).coerceIn(0, steps.size - 1)]
+            if (next == steps[i] && sdr.gainDb != null) {
+                msg(if (dir < 0) "Minimum gain reached" + if (_live.value.clipping) ": still clipping, move away or add an external attenuator" else ""
+                    else "Maximum gain reached")
+                return@launch
+            }
+            setField("trk_gain", next.toString())
+            if (_mode.value == Mode.Track) {
+                try {
+                    sdr.setGain(next)
+                } catch (e: Exception) {
+                    msg("Could not change the gain: ${e.message}")
+                }
+            }
+        }
+    }
+
+    private fun autoAttenuate() {
+        val now = System.currentTimeMillis()
+        if (now - lastAutoAtt < 900) return // let the new gain take effect before judging again
+        lastAutoAtt = now
+        val cur = sdr.gainDb
+        if (cur != null && cur <= sdr.gainSteps().first()) return // already at minimum
+        stepGain(-1, 2) // clipping is already losing the signal: take bigger steps than the manual button
+    }
+
+    // ------------------------------------------------------------ listening
+    fun setListen(on: Boolean) {
+        if (!on) {
+            stopListen()
+            return
+        }
+        if (_mode.value != Mode.Track) {
+            msg("Start tracking first: the radio listens to the tracked frequency")
+            return
+        }
+        voice.start()
+        _listen.value = true
+    }
+
+    private fun stopListen() {
+        voice.stop()
+        _listen.value = false
     }
 
     // ------------------------------------------------------------ sessions and points
@@ -418,6 +484,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         gps.stop()
         compass.stop()
         beeper.stop()
+        voice.stop()
         db.close()
     }
 
@@ -427,7 +494,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             "trk_freq" to "", "trk_bw" to "12.5", "trk_gain" to "30", "trk_bearing" to "",
             "sdr_host" to "127.0.0.1", "sdr_port" to "1234", "sdr_ppm" to "0", "sdr_settle" to "80",
             "mount_axis" to "TOP", "heading_offset" to "0", "use_sensor" to "true", "use_volume" to "true",
-            "map_offline" to "false", "dl_zmin" to "12", "dl_zmax" to "16",
+            "map_offline" to "false", "map_style" to "TOPO", "listen_mode" to "NFM", "listen_sql" to "6", "listen_vol" to "100", "auto_att" to "false", "night_mode" to "false", "dl_zmin" to "12", "dl_zmax" to "16",
         )
     }
 }

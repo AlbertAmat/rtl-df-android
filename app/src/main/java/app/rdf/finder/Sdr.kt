@@ -1,6 +1,7 @@
 package app.rdf.finder
 
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /** Layer over [RtlTcpClient]: configure, tune and read IQ samples as floats in [-1, 1]. */
 class Sdr(private val client: RtlTcpClient) {
@@ -10,7 +11,11 @@ class Sdr(private val client: RtlTcpClient) {
 
     var fs = 2_048_000
         private set
-    var gainDb: Double? = null
+    @Volatile var gainDb: Double? = null
+        private set
+
+    /** Wall-clock time of the last gain change, so measurements taken across a change can be ignored. */
+    @Volatile var gainChangedMs = 0L
         private set
 
     private fun bytesFor(ms: Int): Long = fs.toLong() * 2L * ms / 1000L
@@ -32,6 +37,25 @@ class Sdr(private val client: RtlTcpClient) {
         }
         discard(300)
     }
+
+    /** Changes the gain while streaming (null = tuner AGC). */
+    fun setGain(gain: Double?) {
+        if (gain == null) {
+            client.setGainMode(false)
+            gainDb = null
+        } else {
+            client.setGainMode(true)
+            val tenths = snapGain((gain * 10).roundToInt())
+            client.setGainTenthsDb(tenths)
+            gainDb = tenths / 10.0
+        }
+        gainChangedMs = System.currentTimeMillis()
+    }
+
+    /** Gain values (dB) this tuner can actually apply, ascending. */
+    fun gainSteps(): List<Double> =
+        if (client.tunerType == 5 || client.tunerType == 6) R820T_GAINS.map { it / 10.0 }
+        else (0..50 step 5).map { it.toDouble() }
 
     private fun snapGain(tenths: Int): Int {
         // Gain table for the R820T/R820T2/R828D (tuner 5 and 6); other tuners: value as is

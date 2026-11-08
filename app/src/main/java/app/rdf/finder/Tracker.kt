@@ -38,10 +38,12 @@ class Tracker {
     private val lock = Any()
     @Volatile private var freqHz = 0.0
     @Volatile private var gainDb: Double? = null
+    @Volatile private var sdrRef: Sdr? = null
 
     suspend fun run(sdr: Sdr, freq: Double, bwHz: Double, gain: Double?, state: MutableStateFlow<LiveState>) {
         synchronized(lock) { samples.clear() }
         freqHz = freq
+        sdrRef = sdr
         sdr.configure(FS, gain)
         gainDb = sdr.gainDb
         sdr.tune(Math.round(freq - OFFSET))
@@ -60,6 +62,7 @@ class Tracker {
             while (true) {
                 currentCoroutineContext().ensureActive()
                 val iq = sdr.read(READ)
+                gainDb = sdr.gainDb // can change while tracking (attenuation)
                 var clip = false
                 for (v in iq) if (abs(v) >= 0.98f) { clip = true; break }
 
@@ -98,14 +101,16 @@ class Tracker {
      */
     fun sampleForPoint(windowMs: Long = 3000): PointSample? {
         val now = System.currentTimeMillis()
-        val recent = synchronized(lock) { samples.filter { now - it.t <= windowMs } }
+        // Only measurements taken with the current gain: after an attenuation change, wait for fresh ones
+        val since = maxOf(now - windowMs, (sdrRef?.gainChangedMs ?: 0L) + GAIN_SETTLE_MS)
+        val recent = synchronized(lock) { samples.filter { it.t >= since } }
         if (recent.size < 3) return null
         return PointSample(
             powerDb = Dsp.percentile(recent.map { it.power }, 90.0),
             snrDb = Dsp.percentile(recent.map { it.snr }, 90.0),
             n = recent.size,
             clipping = recent.last().clip,
-            gainDb = gainDb,
+            gainDb = sdrRef?.gainDb ?: gainDb,
             freqHz = freqHz,
         )
     }
@@ -114,5 +119,6 @@ class Tracker {
         const val FS = 1_024_000
         const val OFFSET = 200_000.0 // tuned with an offset so the channel does not fall on the DC spike
         const val READ = 65536       // ~64 ms per measurement
+        const val GAIN_SETTLE_MS = 250L // ignore measurements right after a gain change
     }
 }

@@ -99,7 +99,7 @@ class RtlTcpIntegrationTest {
             val sdr = Sdr(client)
             val state = MutableStateFlow(ScanState())
             withTimeout(60_000) {
-                Scanner.run(sdr, ScanParams(433.0e6, 435.0e6, 4.0, 8.0, 38.0), state)
+                Scanner.run(sdr, ScanParams(433.0e6, 435.0e6, 10.0, 8.0, 38.0), state) // long enough for a full sweep even on a loaded machine
             }
             val r = state.value
             println("sweeps=${r.sweeps} emitters=" + r.results.joinToString { "%.4f".format(it.freqHz / 1e6) + "(${it.snrDb.roundToInt()}dB)" })

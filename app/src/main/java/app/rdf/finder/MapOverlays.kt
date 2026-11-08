@@ -10,13 +10,21 @@ import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
+import org.osmdroid.views.overlay.ScaleBarOverlay
 import kotlin.math.max
 
 /** Map drawing: numbered points, rays, estimated emitter and own position. */
 object MapOverlays {
-    private val ORANGE = Color.rgb(255, 152, 0)
+    private val RAY_DAY = Color.rgb(255, 179, 0)
+    private val FRIENDLY_DAY = Color.rgb(63, 167, 255)
+    private val HOSTILE_DAY = Color.rgb(229, 72, 58)
+    private val RED_NIGHT = Color.rgb(255, 68, 51)
 
-    fun render(map: MapView, ctx: Context, data: SessionData, fix: GpsFix?) {
+    fun render(map: MapView, ctx: Context, data: SessionData, fix: GpsFix?, night: Boolean) {
+        // blue = own position, amber = bearing lines, red = estimated emitter; all red in night mode
+        val rayColor = if (night) RED_NIGHT else RAY_DAY
+        val ownColor = if (night) RED_NIGHT else FRIENDLY_DAY
+        val emitterColor = if (night) RED_NIGHT else HOSTILE_DAY
         map.overlays.clear()
         val est = data.estimate
 
@@ -26,7 +34,7 @@ object MapOverlays {
             map.overlays.add(
                 Polyline().apply {
                     setPoints(listOf(GeoPoint(p.lat, p.lon), GeoPoint(la, lo)))
-                    outlinePaint.color = ORANGE
+                    outlinePaint.color = rayColor
                     outlinePaint.strokeWidth = 6f
                 },
             )
@@ -34,7 +42,7 @@ object MapOverlays {
                 Marker(map).apply {
                     position = GeoPoint(p.lat, p.lon)
                     setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                    icon = dot(ctx, ORANGE, 28, "${i + 1}")
+                    icon = dot(ctx, rayColor, 28, "${i + 1}")
                     title = "#${i + 1} · bearing ${"%.0f".format(p.bearingTrue)}° · ${"%.1f".format(p.powerDb)} dB"
                 },
             )
@@ -45,7 +53,7 @@ object MapOverlays {
                 Marker(map).apply {
                     position = GeoPoint(est.lat, est.lon)
                     setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                    icon = dot(ctx, Color.rgb(229, 57, 53), 32, null)
+                    icon = dot(ctx, emitterColor, 32, null)
                     title = "Estimated emitter"
                 },
             )
@@ -56,11 +64,12 @@ object MapOverlays {
                 Marker(map).apply {
                     position = GeoPoint(fix.lat, fix.lon)
                     setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                    icon = dot(ctx, Color.rgb(30, 144, 255), 22, null)
+                    icon = dot(ctx, ownColor, 22, null)
                     title = "You"
                 },
             )
         }
+        map.overlays.add(ScaleBarOverlay(map))
         map.invalidate()
     }
 

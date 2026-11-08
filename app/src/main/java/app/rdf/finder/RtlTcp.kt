@@ -42,6 +42,12 @@ class RtlTcpClient {
     private var capSkip = 0L
     private var capActive = false
 
+    /**
+     * Optional listener that sees every received IQ chunk (buffer, valid length), including the data
+     * [capture] does not keep. Called on the reader thread: copy and return quickly. Used for audio.
+     */
+    @Volatile var tap: ((ByteArray, Int) -> Unit)? = null
+
     fun connect(host: String, port: Int, timeoutMs: Int = 3000) {
         close()
         lastError = null
@@ -84,6 +90,7 @@ class RtlTcpClient {
             while (true) {
                 val n = input.read(buf)
                 if (n < 0) throw IOException("SDR driver closed the connection")
+                tap?.invoke(buf, n)
                 lock.withLock {
                     if (capActive) {
                         val target = capBuf!!
