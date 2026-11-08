@@ -448,7 +448,7 @@ fun PolarPlot(peak: PeakInfo?, headingDeg: Double?, modifier: Modifier) {
                     val v = prof[i]
                     if (v.isNaN()) continue
                     val rad = Math.toRadians((i + 0.5) * step)
-                    val rr = r * (0.12 + 0.88 * ((v - lo) / (hi - lo)).toFloat())
+                    val rr = r * (0.12f + 0.88f * ((v - lo) / (hi - lo)).toFloat())
                     val pt = Offset(c.x + sin(rad).toFloat() * rr, c.y - cos(rad).toFloat() * rr)
                     if (first) { path.moveTo(pt.x, pt.y); first = false } else path.lineTo(pt.x, pt.y)
                 }
