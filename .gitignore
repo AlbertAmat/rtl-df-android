@@ -6,3 +6,9 @@ local.properties
 captures/
 .externalNativeBuild/
 .cxx/
+
+# hardware: third-party inputs and generated parts (the MP5 lower is CC BY-NC-ND: do not redistribute derivatives)
+hardware/vendor/
+hardware/out/
+hardware/.venv/
+__pycache__/
