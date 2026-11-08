@@ -606,6 +606,34 @@ fun CompassDial(deg: Double?, modifier: Modifier) {
     }
 }
 
+/**
+ * Returns an action that asks the "SDR driver" app to start the dongle (it has no Start button: it only
+ * reacts to an iqsrc:// request from a host app), waits for it to finish, then connects to rtl_tcp.
+ * If the driver is not installed or the host is not this phone, it just connects.
+ */
+@Composable
+fun rememberSdrConnect(vm: MainViewModel): () -> Unit {
+    val ctx = LocalContext.current
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        if (r.resultCode == android.app.Activity.RESULT_OK || r.resultCode == android.app.Activity.RESULT_CANCELED) vm.connect()
+    }
+    return {
+        val host = vm.f("sdr_host").trim()
+        val port = vm.f("sdr_port").trim().ifEmpty { "1234" }
+        val local = host == "127.0.0.1" || host == "localhost"
+        if (!local) vm.connect()
+        else {
+            val i = Intent(Intent.ACTION_VIEW, Uri.parse("iqsrc://-a 127.0.0.1 -p $port -n 1")).setPackage("marto.rtl_tcp_andro")
+            try {
+                launcher.launch(i)
+            } catch (e: Exception) {
+                vm.postMessage("SDR driver (marto.rtl_tcp_andro) is not installed or cannot be started")
+                vm.connect()
+            }
+        }
+    }
+}
+
 private fun openDriver(ctx: Context, vm: MainViewModel) {
     val i = ctx.packageManager.getLaunchIntentForPackage("marto.rtl_tcp_andro")
     if (i == null) vm.postMessage("Could not find the \"SDR driver\" app") else ctx.startActivity(i)
@@ -725,7 +753,8 @@ fun HuntTab(vm: MainViewModel, holder: MapHolder) {
         !tracking -> "START TRACK  ${vm.f("trk_freq")} MHz"
         else -> "STOP"
     }
-    val mainClick = { when { !connected -> vm.connect(); !tracking -> vm.startTrack(); else -> vm.stopAll() } }
+    val startSdr = rememberSdrConnect(vm)
+    val mainClick = { when { !connected -> startSdr(); !tracking -> vm.startTrack(); else -> vm.stopAll() } }
     if (tracking) TacOutlinedButton(onClick = mainClick, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text(mainLabel, fontSize = 18.sp, fontWeight = FontWeight.Bold) }
     else TacButton(onClick = mainClick, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text(mainLabel, fontSize = 18.sp, fontWeight = FontWeight.Bold) }
     if (!connected) Text(sdrInfo, fontSize = 13.sp, color = MUTED)
@@ -892,8 +921,9 @@ fun DetailsTab(vm: MainViewModel, holder: MapHolder) {
     val drift by vm.driftHz.collectAsStateWithLifecycle()
     val useSensor = vm.f("use_sensor") == "true"
 
+    val startSdr = rememberSdrConnect(vm)
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        TacButton(onClick = { if (connected) vm.disconnect() else vm.connect() }, modifier = Modifier.weight(1f)) {
+        TacButton(onClick = { if (connected) vm.disconnect() else startSdr() }, modifier = Modifier.weight(1f)) {
             Text(if (connected) "DISCONNECT SDR" else "CONNECT SDR", fontSize = 13.sp)
         }
         TacOutlinedButton(onClick = { openDriver(ctx, vm) }, modifier = Modifier.weight(1f)) {

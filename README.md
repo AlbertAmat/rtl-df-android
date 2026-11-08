@@ -67,7 +67,7 @@ From the command line (needs the Android SDK, e.g. `ANDROID_HOME` or a `local.pr
 ```
 
 ## First use
-1. Open **SDR driver**, plug in the RTL-SDR (accept the USB permission) and tap **Start** (host `127.0.0.1`, port `1234`).
+1. Install **SDR driver** and plug in the RTL-SDR. The app starts the driver itself (accept the USB permission when asked).
 2. Open this app and grant the location permission. In **Track** tap **CONNECT SDR** (there is also a button to open SDR driver).
 3. Go to **Scan** → **START SCAN**.
 

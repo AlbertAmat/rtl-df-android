@@ -5,7 +5,7 @@ A field guide: from plugging in the dongle to a position on the map. The screens
 <p align="center"><img src="demo.gif" alt="Demo" width="260"></p>
 
 ## Quick start (10 steps)
-1. Plug the RTL-SDR into the phone, open **SDR driver**, accept the USB permission and tap **Start**.
+1. Plug the RTL-SDR into the phone, install **SDR driver** once. You do not need to open it: **CONNECT SDR** starts it and asks for the USB permission (tap OK).
 2. Open **RDF Finder** and grant location (and notification) permission.
 3. **HUNT** screen → **CONNECT SDR**. Wait for the `GPS` chip to show a small error (±5–10 m).
 4. **SCAN** → pick a preset → **START SCAN**.
