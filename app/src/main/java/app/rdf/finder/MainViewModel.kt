@@ -66,6 +66,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val client = RtlTcpClient()
     private val sdr = Sdr(client)
     private val tracker = Tracker()
+    private val peakFinder = PeakFinder()
     private val db = RdfDb(app)
     private val beeper = Beeper()
     private val voice = VoiceListener(client)
@@ -86,6 +87,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val gpsValid: StateFlow<Boolean> = _gpsValid.asStateFlow()
     private val _heading = MutableStateFlow(HeadingInfo())
     val heading: StateFlow<HeadingInfo> = _heading.asStateFlow()
+    private val _peak = MutableStateFlow<PeakInfo?>(null)
+    /** Strongest direction found while sweeping the antenna (null until enough data). */
+    val peak: StateFlow<PeakInfo?> = _peak.asStateFlow()
     private val _session = MutableStateFlow(SessionData())
     val session: StateFlow<SessionData> = _session.asStateFlow()
     private val _sessions = MutableStateFlow<List<SessionRow>>(emptyList())
@@ -114,6 +118,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 _gpsValid.value = gps.isValid()
                 _gainDb.value = sdr.gainDb
                 updateHeading()
+                updatePeak()
             }
         }
         viewModelScope.launch {
@@ -152,6 +157,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun f1(v: Double) = String.format(Locale.US, "%.6f", v).trimEnd('0').trimEnd('.')
 
     private fun norm(x: Double) = ((x % 360.0) + 360.0) % 360.0
+
+    private fun updatePeak() {
+        val now = System.currentTimeMillis()
+        val lv = _live.value
+        val h = _heading.value.trueDeg
+        if (_mode.value == Mode.Track && lv.running && !lv.clipping && h != null && f("use_sensor") == "true") {
+            lv.powerDb?.let { peakFinder.add(h, it, now) }
+        }
+        _peak.value = if (_mode.value == Mode.Track) peakFinder.estimate(now) else null
+    }
 
     private fun updateHeading() {
         compass.axis = runCatching { MountAxis.valueOf(f("mount_axis")) }.getOrDefault(MountAxis.TOP)
@@ -268,6 +283,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         val g = gain("trk_gain")
         val freq = fMhz * 1e6
+        peakFinder.clear()
         launchSdr(Mode.Track) {
             withContext(Dispatchers.IO) { ensureSession(freq) }
             tracker.run(sdr, freq, bw * 1e3, g, _live)
@@ -360,7 +376,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Records a point with the GPS position, bearing (phone compass or typed) and power. */
-    fun recordPoint() {
+    fun recordPoint(usePeak: Boolean = false) {
         viewModelScope.launch(Dispatchers.Default) {
             if (_mode.value != Mode.Track) {
                 msg("Start tracking before recording a point")
@@ -382,7 +398,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
             val useSensor = f("use_sensor") == "true"
-            val mag: Double = if (useSensor) {
+            val peakBearing = if (usePeak) _peak.value?.takeIf { it.reliable }?.bearing else null
+            if (usePeak && peakBearing == null) {
+                msg("No reliable peak yet: sweep the antenna through a full turn")
+                return@launch
+            }
+            val mag: Double = if (peakBearing != null) {
+                norm(peakBearing - declination - (fd("heading_offset") ?: 0.0))
+            } else if (useSensor) {
                 compass.meanHeading() ?: run {
                     msg("No compass bearing (antenna too vertical?)")
                     return@launch

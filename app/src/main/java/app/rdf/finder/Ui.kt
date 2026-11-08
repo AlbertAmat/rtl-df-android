@@ -694,6 +694,34 @@ fun TrackTab(vm: MainViewModel, holder: MapHolder) {
     }
     SwitchRow("Use the phone compass", useSensor) { vm.setField("use_sensor", it.toString()) }
 
+    val peak by vm.peak.collectAsStateWithLifecycle()
+    if (useSensor) {
+        Panel(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                val pk = peak
+                Text("SWEEP ASSIST", fontSize = 12.sp, color = MUTED, letterSpacing = 1.sp)
+                if (pk == null) {
+                    Text("Sweep the antenna slowly through a full turn to find the strongest direction.", fontSize = 13.sp, color = MUTED)
+                } else {
+                    Text(
+                        "PEAK ${pk.bearing.roundToInt()}° true · +${f1(pk.prominenceDb)} dB over average",
+                        fontSize = 16.sp, fontWeight = FontWeight.Bold, color = if (pk.reliable) OK else WARN,
+                    )
+                    Text(
+                        if (pk.reliable) "Point the Yagi at ${pk.bearing.roundToInt()}° and record, or record at the peak directly."
+                        else "Not reliable yet (${pk.coverageDeg.roundToInt()}° covered): sweep a wider arc past the lobe.",
+                        fontSize = 12.sp, color = MUTED,
+                    )
+                }
+                TacButton(
+                    onClick = { vm.recordPoint(usePeak = true) },
+                    enabled = mode == Mode.Track && peak?.reliable == true,
+                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                ) { Text("RECORD FIX AT PEAK", fontSize = 14.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp) }
+            }
+        }
+    }
+
     TacButton(
         onClick = { vm.recordPoint() },
         enabled = mode == Mode.Track,

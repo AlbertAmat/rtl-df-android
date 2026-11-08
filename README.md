@@ -13,6 +13,7 @@ Android app for locating transmitters with a Yagi antenna. The phone is mounted 
 2. **Track**: pick an emitter from the list (or type a frequency). Live power as a number, a graph and an **audio tone** (higher pitch = stronger signal).
    - **Attenuate when you get close**: **− ATT** / **+ GAIN** change the tuner gain live, and **Auto-attenuate when clipping** steps it down by itself whenever the signal overloads the receiver (the red *CLIPPING* warning). The gain stored with each point is always the one in force when it was measured.
    - **Listen**: **▶ LISTEN** demodulates the tracked frequency (NFM for walkie-talkies and amateur radio, AM for airband) and plays it on the phone speaker. The squelch opens on the measured SNR; set its threshold and the volume next to the button.
+   - **Sweep assist**: swing the Yagi through a full turn and the app bins power by compass heading and shows the strongest direction (`PEAK 130° true · +9 dB over average`). **RECORD FIX AT PEAK** stores a fix with that bearing instead of the instantaneous compass reading. It only enables once the lobe is clear (≥ 4 dB above the average direction and ≥ 60° of heading covered); clipped samples are ignored.
 3. **Record fix** (button or **volume key**): stores GPS position, time (GPS time), frequency, power, SNR, gain and bearing. The bearing comes from the phone compass, with magnetic declination computed automatically from the GPS position.
 4. With 2 or more points it computes the emitter position (intersection / least squares) and draws it on the map together with the rays.
 
@@ -102,6 +103,7 @@ In the app, set **Settings → SDR driver connection → Host** to `10.0.2.2` (t
 | `Dsp.kt` | FFT, averaged spectrum, median, percentiles |
 | `Scanner.kt` | hop-based sweep, maxima, activity %, grouping into emitters |
 | `Tracker.kt` | live power and SNR; point power = 90th percentile over 3 s |
+| `PeakFinder.kt` | sweep assist: power vs. heading bins, main-lobe bearing, reliability |
 | `Geo.kt` | intersection / least squares of bearings |
 | `Sensors.kt` | GPS (LocationManager), compass (rotation vector), declination |
 | `Db.kt`, `Export.kt` | SQLite, shareable CSV and GeoJSON |
