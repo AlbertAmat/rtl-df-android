@@ -10,13 +10,18 @@ Android app for locating transmitters with a Yagi antenna. The phone is mounted 
 
 **New here? Read the step-by-step [usage guide](docs/USAGE.md).** Pre-built APK on the [Releases page](https://github.com/AlbertAmat/rtl-df-android/releases).
 
+**Screens** (bottom bar, built for gloves and sunlight: no scrolling on the main screen, 48–76 dp buttons, plain high-contrast text):
+- **HUNT**: one big button (connect → start → stop), frequency, ▲/▼ trend, signal in dB with a level bar and peak tick, heading and sweep peak with a small polar plot, **− ATT / + GAIN**, **AUTO ATT / LISTEN / TONE**, and **RECORD FIX** / **FIX AT PEAK** at the bottom, in thumb reach. **DETAILS** opens the rest below: fields, receiver, waterfall, fox status, estimate, fixes.
+- **MAP**: full-screen map with the target distance, bearing and next fix on top.
+- **SCAN**, **LOG** (sessions, export, import) and **SET** (settings).
+
 **Workflow**
 1. **Scan**: sweeps 400–470 MHz (the range of the Ailunce AY02 Yagi) for the duration you choose and lists the active emitters with level, SNR and activity %. Presets: full Yagi range, PMR 446, 70 cm, ISM 433.
 2. **Track**: pick an emitter from the list (or type a frequency). Live power as a number, a graph and an **audio tone** (higher pitch = stronger signal).
    - **Attenuate when you get close**: **− ATT** / **+ GAIN** change the tuner gain live, and **Auto-attenuate when clipping** steps it down by itself whenever the signal overloads the receiver (the red *CLIPPING* warning). The gain stored with each point is always the one in force when it was measured.
    - **Listen**: **▶ LISTEN** demodulates the tracked frequency (NFM for walkie-talkies and amateur radio, AM for airband) and plays it on the phone speaker. The squelch opens on the measured SNR; set its threshold and the volume next to the button.
-   - **Sweep assist**: swing the Yagi through a full turn and the app bins power by compass heading and shows the strongest direction (`PEAK 130° true · +9 dB over average`). **RECORD FIX AT PEAK** stores a fix with that bearing instead of the instantaneous compass reading. It only enables once the lobe is clear (≥ 4 dB above the average direction and ≥ 60° of heading covered); clipped samples are ignored.
-   - **Hotter / colder**: the Track tab compares the last 3 s of signal with the 4 s before and shows ▲ HOTTER / ▼ COLDER. **VOICE ON** speaks the cues ("hotter", "colder", then the SNR) so the phone can stay in a pocket.
+   - **Sweep assist**: swing the Yagi through a full turn and the app bins power by compass heading and shows the strongest direction (`PEAK 130° true · +9 dB over average`). **FIX AT PEAK** stores a fix with that bearing instead of the instantaneous compass reading. It only enables once the lobe is clear (≥ 4 dB above the average direction and ≥ 60° of heading covered); clipped samples are ignored.
+   - **Hotter / colder**: the Hunt screen compares the last 3 s of signal with the 4 s before and shows ▲ HOTTER / ▼ COLDER. **VOICE ON** speaks the cues ("hotter", "colder", then the SNR) so the phone can stay in a pocket.
    - **Timed foxes**: after three bursts with a steady period the app shows `TIMED FOX · every 60 s, on ~10 s · next in 23 s`, so you know when to measure.
    - **Waterfall and drift**: a rolling spectrum (±128 kHz) around the channel. If the carrier sits more than 1.5 kHz off the tuned frequency (cheap dongles drift), **RETUNE** moves to it and keeps the same hunt.
    - **Multipath warning**: if sweep assist sees a second lobe within 3 dB of the main one it warns that reflections are likely.
@@ -33,17 +38,17 @@ Android app for locating transmitters with a Yagi antenna. The phone is mounted 
 
 ## Screenshots
 
-| Scan | Track | Clipping → attenuated |
+| Scan | Hunt | Clipping → attenuated |
 |:---:|:---:|:---:|
 | <img src="docs/screenshots/scan.png" width="240"> | <img src="docs/screenshots/track.png" width="240"> | <img src="docs/screenshots/attenuate.png" width="240"> |
-| Emitters found by a sweep: level, SNR, activity | Live power, graph and gain controls | Auto-attenuate stepped the gain down after clipping |
+| Emitters found by a sweep: level, SNR, activity | The Hunt screen: signal, bearings, gain, record | Auto-attenuate stepped the gain down after clipping |
 
-| Listen | Estimate | Map |
+| Listen | Estimate (details) | Map |
 |:---:|:---:|:---:|
 | <img src="docs/screenshots/listen.png" width="240"> | <img src="docs/screenshots/estimate.png" width="240"> | <img src="docs/screenshots/map.png" width="240"> |
-| Receiver panel: NFM/AM, squelch, volume | Estimated emitter and recorded fixes | Bearing lines, own position (blue), emitter (red) |
+| Listen toggle on the Hunt screen | Estimate, target and fixes under DETAILS | Full-screen map with target and next fix |
 
-| Sessions | Settings | Night mode |
+| Log | Settings | Night mode |
 |:---:|:---:|:---:|
 | <img src="docs/screenshots/sessions.png" width="240"> | <img src="docs/screenshots/settings.png" width="240"> | <img src="docs/screenshots/night.png" width="240"> |
 | Hunts, CSV and GeoJSON export | Map style (topographic by default), night mode | Red display that keeps your night vision |
@@ -73,7 +78,7 @@ Tips: enable **airplane mode** in the field (GPS keeps working and the phone rad
 ## Mounting the phone on the Yagi
 - Place the phone **flat** on the boom with its top edge pointing forward (the default). If you mount it differently, choose the axis in **Settings → Phone mounting**.
 - A parametric printable mount is in [`hardware/`](hardware/README.md). Print it in **PETG/PLA with no metal or magnets** (steel screws, magnetic mounts…): they disturb the compass. Keep it as far from the dongle and the boom as you can.
-- Calibrate the compass by moving the phone in a figure 8 with the mount in place (the Track tab shows the calibration level).
+- Calibrate the compass by moving the phone in a figure 8 with the mount in place (the Hunt screen warns when it needs calibrating).
 - **Bearing offset**: point the Yagi at something with a known bearing and enter the difference in Settings (it compensates for the phone not being perfectly aligned).
 - **Volume keys** record the point without touching the screen; the app averages the bearing over the 2.5 s before the key press (pressing moves the antenna).
 
@@ -102,7 +107,7 @@ Frame your work area on the map (the download uses the selected map style) and, 
 python3 tools/fake_rtl_tcp.py 1234 /tmp/level      # optional file with a 0..1 level for the 446.100 MHz carrier
 ```
 
-In the app, set **Settings → SDR driver connection → Host** to `10.0.2.2` (the emulator's alias for the host machine), then **CONNECT SDR** in the Track tab. Mock GPS positions come from `adb emu geo fix <lon> <lat>`; switch off **Use the phone compass** and type the bearings. Changing the level file while tracking simulates sweeping the antenna.
+In the app, set **Settings → SDR driver connection → Host** to `10.0.2.2` (the emulator's alias for the host machine), then **CONNECT SDR** on the Hunt screen. Mock GPS positions come from `adb emu geo fix <lon> <lat>`; switch off **Use the phone compass** and type the bearings. Changing the level file while tracking simulates sweeping the antenna.
 
 ## Known limitations
 - Listening is mono NFM/AM/USB/LSB/CW only (no wide FM, no digital voice such as DMR or P25), and you are responsible for complying with local rules on monitoring radio communications.

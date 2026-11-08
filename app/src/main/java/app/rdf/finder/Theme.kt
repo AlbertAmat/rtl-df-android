@@ -149,7 +149,7 @@ fun TacButton(
     content: @Composable RowScope.() -> Unit,
 ) = Button(
     onClick = onClick,
-    modifier = modifier.heightIn(min = 40.dp),
+    modifier = modifier.heightIn(min = 48.dp),
     enabled = enabled,
     shape = Square,
     contentPadding = ButtonPadding,
@@ -169,7 +169,7 @@ fun TacOutlinedButton(
     content: @Composable RowScope.() -> Unit,
 ) = OutlinedButton(
     onClick = onClick,
-    modifier = modifier.heightIn(min = 40.dp),
+    modifier = modifier.heightIn(min = 48.dp),
     enabled = enabled,
     shape = Square,
     contentPadding = ButtonPadding,

@@ -155,39 +155,79 @@ fun RdfApp(vm: MainViewModel) {
                 snackbarHost = { SnackbarHost(snackbar) },
                 containerColor = MaterialTheme.colorScheme.background,
             ) { pad ->
-                var tab by rememberSaveable { mutableIntStateOf(0) }
+                var tab by rememberSaveable { mutableIntStateOf(0) } // 0 HUNT, 1 MAP, 2 SCAN, 3 LOG, 4 SET
                 Column(Modifier.padding(pad).fillMaxSize()) {
                     Header(vm)
-                    Box(Modifier.weight(0.32f).fillMaxWidth().clipToBounds()) { MapPane(vm, holder) }
-                    TabRow(
-                        selectedTabIndex = tab,
-                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                        contentColor = ACCENT,
-                    ) {
-                        listOf("Scan", "Track", "Sessions", "Settings").forEachIndexed { i, t ->
-                            Tab(
-                                modifier = Modifier.height(38.dp),
-                                selected = tab == i,
-                                onClick = { tab = i },
-                                selectedContentColor = ACCENT,
-                                unselectedContentColor = MUTED,
-                                text = { Text(t.uppercase(), fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp) },
-                            )
+                    Box(Modifier.weight(1f).fillMaxWidth()) {
+                        // the map stays composed under the other screens so it keeps its position and tiles
+                        Box(Modifier.fillMaxSize().clipToBounds()) { MapPane(vm, holder) }
+                        if (tab == 1) {
+                            Column(Modifier.align(Alignment.TopStart).background(Color(0xDD000000)).padding(8.dp)) { TargetLine(vm, big = true) }
+                        } else {
+                            Column(
+                                Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+                                    .verticalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                when (tab) {
+                                    0 -> HuntTab(vm, holder)
+                                    2 -> ScanTab(vm) { tab = 0 }
+                                    3 -> SessionsTab(vm)
+                                    else -> SettingsTab(vm, holder)
+                                }
+                            }
                         }
                     }
-                    Column(
-                        Modifier.weight(0.68f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 6.dp),
-                        verticalArrangement = Arrangement.spacedBy(5.dp),
-                    ) {
-                        when (tab) {
-                            0 -> ScanTab(vm) { tab = 1 }
-                            1 -> TrackTab(vm, holder)
-                            2 -> SessionsTab(vm)
-                            else -> SettingsTab(vm, holder)
-                        }
-                    }
+                    BottomNav(tab) { tab = it }
                 }
             }
+        }
+    }
+}
+
+/** Big bottom navigation: filled = current screen. */
+@Composable
+fun BottomNav(tab: Int, onTab: (Int) -> Unit) {
+    Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer).border(1.dp, MaterialTheme.colorScheme.outline)) {
+        listOf("HUNT", "MAP", "SCAN", "LOG", "SET").forEachIndexed { i, t ->
+            Box(
+                Modifier.weight(1f).height(56.dp)
+                    .background(if (tab == i) ACCENT else MaterialTheme.colorScheme.surfaceContainer)
+                    .clickable { onTab(i) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(t, fontSize = 15.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
+                    color = if (tab == i) MaterialTheme.colorScheme.onPrimary else MUTED)
+            }
+        }
+    }
+}
+
+/** Distance and bearing to the estimated emitter from the current GPS position, plus the next fix when [big]. */
+@Composable
+fun TargetLine(vm: MainViewModel, big: Boolean) {
+    val data by vm.session.collectAsStateWithLifecycle()
+    val fix by vm.gps.fix.collectAsStateWithLifecycle()
+    val e = data.estimate
+    val me = fix
+    if (e == null || me == null) {
+        Text(if (big) "NO ESTIMATE: RECORD 2+ FIXES FROM DIFFERENT PLACES" else "TARGET: --", fontSize = if (big) 14.sp else 15.sp, color = MUTED, fontWeight = FontWeight.Bold)
+        return
+    }
+    val (d, b) = FieldGuide.distBearing(me.lat, me.lon, e.lat, e.lon)
+    val dist = if (d >= 1000) String.format(Locale.US, "%.2f km", d / 1000) else String.format(Locale.US, "%.0f m", d)
+    Text(
+        "TARGET $dist @ ${b.roundToInt()}° ${FieldGuide.compass8(b)}",
+        fontSize = if (big) 24.sp else 18.sp, fontWeight = FontWeight.Bold, color = OK,
+    )
+    if (big) {
+        if (e.ellipseMajorM > 0) Text(String.format(Locale.US, "±%.0f m (95%%)", e.ellipseMajorM / 2), fontSize = 14.sp, color = MUTED)
+        val next = FieldGuide.nextFix(data.points.map { Geo.Ray(it.lat, it.lon, it.bearingTrue) }, e.lat, e.lon, me.lat, me.lon)
+        if (next != null && d > 40) {
+            Text(
+                String.format(Locale.US, "NEXT FIX %.0f m @ %.0f° %s", next.distFromMeM, next.bearingFromMe, FieldGuide.compass8(next.bearingFromMe)),
+                fontSize = 16.sp, fontWeight = FontWeight.Bold, color = ACCENT,
+            )
         }
     }
 }
@@ -659,9 +699,183 @@ fun ScanTab(vm: MainViewModel, goTrack: () -> Unit) {
     }
 }
 
-// ------------------------------------------------------------------ Track tab
+// ------------------------------------------------------------------ Hunt screen
+/** The screen used while walking: everything that is touched during a hunt, big, with no scrolling needed. */
 @Composable
-fun TrackTab(vm: MainViewModel, holder: MapHolder) {
+fun HuntTab(vm: MainViewModel, holder: MapHolder) {
+    val live by vm.live.collectAsStateWithLifecycle()
+    val mode by vm.mode.collectAsStateWithLifecycle()
+    val heading by vm.heading.collectAsStateWithLifecycle()
+    val peak by vm.peak.collectAsStateWithLifecycle()
+    val connected by vm.sdrConnected.collectAsStateWithLifecycle()
+    val sdrInfo by vm.sdrInfo.collectAsStateWithLifecycle()
+    val gainNow by vm.gainDb.collectAsStateWithLifecycle()
+    val listening by vm.listen.collectAsStateWithLifecycle()
+    val atMinGain by vm.atMinGain.collectAsStateWithLifecycle()
+    val trend by vm.trend.collectAsStateWithLifecycle()
+    val sound by vm.sound.collectAsStateWithLifecycle()
+    val data by vm.session.collectAsStateWithLifecycle()
+    val useSensor = vm.f("use_sensor") == "true"
+    var more by rememberSaveable { mutableStateOf(false) }
+    val tracking = mode == Mode.Track
+
+    // one main action: connect -> start -> stop
+    val mainLabel = when {
+        !connected -> "CONNECT SDR"
+        !tracking -> "START TRACK  ${vm.f("trk_freq")} MHz"
+        else -> "STOP"
+    }
+    val mainClick = { when { !connected -> vm.connect(); !tracking -> vm.startTrack(); else -> vm.stopAll() } }
+    if (tracking) TacOutlinedButton(onClick = mainClick, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text(mainLabel, fontSize = 18.sp, fontWeight = FontWeight.Bold) }
+    else TacButton(onClick = mainClick, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text(mainLabel, fontSize = 18.sp, fontWeight = FontWeight.Bold) }
+    if (!connected) Text(sdrInfo, fontSize = 13.sp, color = MUTED)
+
+    // frequency and trend
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(vm.f("trk_freq").ifBlank { "---" } + " MHz", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = ACCENT)
+            val nm = vm.foxName(vm.f("trk_freq").replace(',', '.').toDoubleOrNull())
+            if (nm.isNotBlank()) Text(nm, fontSize = 13.sp, color = MUTED, maxLines = 1)
+        }
+        Text(
+            when (trend) { Trend.HOTTER -> "▲ HOTTER"; Trend.COLDER -> "▼ COLDER"; Trend.STEADY -> "● STEADY"; null -> "" },
+            fontSize = 24.sp, fontWeight = FontWeight.Bold,
+            color = when (trend) { Trend.HOTTER -> OK; Trend.COLDER -> BAD; else -> MUTED },
+        )
+    }
+
+    // signal
+    Panel(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text(
+                    (live.smoothDb ?: live.powerDb)?.let { f1(it) } ?: "--",
+                    fontSize = 72.sp, fontWeight = FontWeight.Bold, lineHeight = 74.sp,
+                    color = if (live.clipping) BAD else ACCENT, modifier = Modifier.weight(1f),
+                )
+                Column(horizontalAlignment = Alignment.End) {
+                    Text("SNR", fontSize = 12.sp, color = MUTED)
+                    Text(
+                        live.snrDb?.let { "${it.roundToInt()}" } ?: "--", fontSize = 34.sp, fontWeight = FontWeight.Bold,
+                        color = if ((live.snrDb ?: 0.0) >= 6.0) OK else MUTED,
+                    )
+                }
+            }
+            LevelBar(live.smoothDb ?: live.powerDb, live.peakDb, live.clipping, Modifier.fillMaxWidth().height(26.dp))
+            if (live.clipping) {
+                Text(
+                    if (atMinGain) "CLIPPING: MIN GAIN. ADD ATTENUATOR OR MOVE BACK" else "CLIPPING: PRESS − ATT",
+                    color = BAD, fontSize = 15.sp, fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+    }
+
+    // bearings
+    Panel(Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (useSensor) {
+                Column(Modifier.weight(1f)) {
+                    Label("Heading true")
+                    Text(
+                        heading.trueDeg?.let { String.format(Locale.US, "%03d°", it.roundToInt() % 360) } ?: "---",
+                        fontSize = 44.sp, fontWeight = FontWeight.Bold, color = ACCENT,
+                    )
+                    if (heading.accuracy < 2) Text("CALIBRATE COMPASS", fontSize = 12.sp, color = WARN, fontWeight = FontWeight.Bold)
+                }
+                Column(Modifier.weight(1f)) {
+                    Label("Peak")
+                    Text(
+                        peak?.bearing?.let { String.format(Locale.US, "%03d°", it.roundToInt() % 360) } ?: "---",
+                        fontSize = 44.sp, fontWeight = FontWeight.Bold, color = if (peak?.reliable == true) OK else MUTED,
+                    )
+                    Text(
+                        when {
+                            peak == null -> "SWEEP 360°"
+                            peak?.multipath == true -> "MULTIPATH?"
+                            peak?.reliable == true -> "+${f1(peak!!.prominenceDb)} dB"
+                            else -> "SWEEP WIDER"
+                        },
+                        fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (peak?.multipath == true) WARN else MUTED,
+                    )
+                }
+                PolarPlot(peak, heading.trueDeg, Modifier.size(96.dp))
+            } else {
+                NumField(vm, "trk_bearing", "Bearing from your compass (° magnetic)", Modifier.weight(1f))
+            }
+        }
+    }
+
+    // gain
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        TacOutlinedButton(onClick = { vm.stepGain(-1) }, modifier = Modifier.weight(1f).height(56.dp)) {
+            Text("− ATT", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        }
+        Panel(Modifier.weight(1.1f).height(56.dp)) {
+            Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                Text("GAIN", fontSize = 11.sp, color = MUTED)
+                Text(gainNow?.let { "${f1(it)} dB" } ?: "AGC", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = if (live.clipping) BAD else ACCENT)
+            }
+        }
+        TacOutlinedButton(onClick = { vm.stepGain(1) }, modifier = Modifier.weight(1f).height(56.dp)) {
+            Text("+ GAIN", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+
+    // toggles: filled = on
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        val auto = vm.f("auto_att") == "true"
+        @Composable fun toggle(on: Boolean, label: String, enabled: Boolean = true, click: () -> Unit) {
+            val body: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit = { Text(label, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1) }
+            if (on) TacButton(onClick = click, enabled = enabled, modifier = Modifier.weight(1f).height(52.dp), content = body)
+            else TacOutlinedButton(onClick = click, enabled = enabled, modifier = Modifier.weight(1f).height(52.dp), content = body)
+        }
+        toggle(auto, "AUTO ATT") { vm.setField("auto_att", (!auto).toString()) }
+        toggle(listening, if (listening) "LISTENING" else "LISTEN", tracking || listening) { vm.setListen(!listening) }
+        toggle(sound, "TONE") { vm.setSound(!sound) }
+    }
+
+    // record
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        TacButton(onClick = { vm.recordPoint() }, enabled = tracking, modifier = Modifier.weight(1.3f).height(76.dp)) {
+            Text("RECORD FIX", fontSize = 22.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+        }
+        TacOutlinedButton(
+            onClick = { vm.recordPoint(usePeak = true) },
+            enabled = tracking && peak?.reliable == true,
+            modifier = Modifier.weight(1f).height(76.dp),
+        ) { Text("FIX AT PEAK", fontSize = 16.sp, fontWeight = FontWeight.Bold) }
+    }
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("FIXES ${data.points.size}", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = MUTED)
+            TargetLine(vm, big = false)
+        }
+        TacOutlinedButton(onClick = { more = !more }, modifier = Modifier.height(48.dp)) {
+            Text(if (more) "DETAILS ▴" else "DETAILS ▾", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+    if (more) DetailsTab(vm, holder)
+}
+
+/** Horizontal level bar over -60..0 dBFS with a peak-hold tick. */
+@Composable
+fun LevelBar(db: Double?, peakDb: Double?, clipping: Boolean, modifier: Modifier) {
+    val fill = if (clipping) BAD else OK
+    val grid = MaterialTheme.colorScheme.outline
+    val tick = ACCENT
+    Canvas(modifier.border(1.dp, grid)) {
+        fun x(v: Double) = (((v + 60.0) / 60.0).coerceIn(0.0, 1.0) * size.width).toFloat()
+        if (db != null) drawRect(fill, Offset(0f, 0f), androidx.compose.ui.geometry.Size(x(db), size.height))
+        for (i in 1 until 6) drawLine(grid, Offset(size.width * i / 6, 0f), Offset(size.width * i / 6, size.height), strokeWidth = 1f)
+        if (peakDb != null) drawLine(tick, Offset(x(peakDb), 0f), Offset(x(peakDb), size.height), strokeWidth = 5f)
+    }
+}
+
+// ------------------------------------------------------------------ Details (below the Hunt screen)
+@Composable
+fun DetailsTab(vm: MainViewModel, holder: MapHolder) {
     val ctx = LocalContext.current
     val live by vm.live.collectAsStateWithLifecycle()
     val mode by vm.mode.collectAsStateWithLifecycle()
@@ -710,40 +924,11 @@ fun TrackTab(vm: MainViewModel, holder: MapHolder) {
 
     val peak by vm.peak.collectAsStateWithLifecycle()
     Panel(Modifier.fillMaxWidth()) {
-        Row(Modifier.padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Label("Signal · dBFS")
-                Row(verticalAlignment = Alignment.Bottom) {
-                    Text(
-                        (live.smoothDb ?: live.powerDb)?.let { f1(it) } ?: "--",
-                        fontSize = 44.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = if (live.clipping) BAD else ACCENT,
-                    )
-                    Text(" dB", Modifier.padding(bottom = 7.dp), color = MUTED)
-                }
-                Text(
-                    "SNR ${live.snrDb?.let { f1(it) } ?: "--"} dB",
-                    fontSize = 14.sp, fontWeight = FontWeight.Bold,
-                    color = if ((live.snrDb ?: 0.0) >= 6.0) OK else MUTED,
-                )
-                Text("10 s peak ${live.peakDb?.let { f1(it) } ?: "--"} dB", fontSize = 12.sp, color = MUTED)
-                if (vm.f("pwr_norm") == "true") {
-                    val n = (live.smoothDb ?: live.powerDb)?.let {
-                        PowerNorm.normalized(it, live.gainDb, vm.f("pwr_offset").replace(',', '.').toDoubleOrNull() ?: 0.0)
-                    }
-                    Text("NORM ${n?.let { f1(it) } ?: "--"} dB @30 dB gain", fontSize = 12.sp, color = MUTED)
-                }
-                if (live.clipping && atMinGain) {
-                    Text("⚠ MIN GAIN: ADD AN EXTERNAL ATTENUATOR (10–20 dB) OR MOVE BACK", color = BAD, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                } else if (live.clipping) {
-                    Text("⚠ CLIPPING · − ATT", color = BAD, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                }
-            }
-            PolarPlot(peak, heading.trueDeg, Modifier.size(150.dp))
+        Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Label("Signal history · spectrum ±128 kHz")
+            Spark(live.history, Modifier.fillMaxWidth().height(40.dp), OK, MaterialTheme.colorScheme.outlineVariant)
+            Waterfall(live.spectrum, Modifier.fillMaxWidth().height(56.dp))
         }
-        Spark(live.history, Modifier.fillMaxWidth().padding(horizontal = 8.dp).height(40.dp), OK, MaterialTheme.colorScheme.outlineVariant)
-        Waterfall(live.spectrum, Modifier.fillMaxWidth().padding(8.dp).height(56.dp))
     }
 
     // Fox status: hotter/colder, burst timing, carrier drift
@@ -783,33 +968,6 @@ fun TrackTab(vm: MainViewModel, holder: MapHolder) {
                 }
             }
         }
-    }
-
-    // Close to the emitter the front end overloads: step the tuner gain down (or let it do so by itself)
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-        TacOutlinedButton(onClick = { vm.stepGain(-1) }, modifier = Modifier.weight(1f)) {
-            Text("− ATT", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-        }
-        Panel(Modifier.weight(1.1f)) {
-            Column(Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Label("Gain")
-                Text(
-                    gainNow?.let { "${f1(it)} dB" } ?: "AGC",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = if (live.clipping) BAD else ACCENT,
-                )
-            }
-        }
-        TacOutlinedButton(onClick = { vm.stepGain(1) }, modifier = Modifier.weight(1f)) {
-            Text("+ GAIN", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-        }
-        // auto-attenuate when the signal clips: filled = on
-        val auto = vm.f("auto_att") == "true"
-        val toggle: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit =
-            { Text("AUTO\nATT", fontSize = 11.sp, lineHeight = 13.sp, fontWeight = FontWeight.Bold, textAlign = androidx.compose.ui.text.style.TextAlign.Center) }
-        if (auto) TacButton(onClick = { vm.setField("auto_att", "false") }, modifier = Modifier.weight(0.8f), content = toggle)
-        else TacOutlinedButton(onClick = { vm.setField("auto_att", "true") }, modifier = Modifier.weight(0.8f), content = toggle)
     }
 
     Panel(Modifier.fillMaxWidth()) {
@@ -872,20 +1030,9 @@ fun TrackTab(vm: MainViewModel, holder: MapHolder) {
                         fontSize = 12.sp, color = MUTED,
                     )
                 }
-                TacButton(
-                    onClick = { vm.recordPoint(usePeak = true) },
-                    enabled = mode == Mode.Track && peak?.reliable == true,
-                    modifier = Modifier.fillMaxWidth().height(44.dp),
-                ) { Text("RECORD FIX AT PEAK", fontSize = 14.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp) }
             }
         }
     }
-
-    TacButton(
-        onClick = { vm.recordPoint() },
-        enabled = mode == Mode.Track,
-        modifier = Modifier.fillMaxWidth().height(56.dp),
-    ) { Text("RECORD FIX  ·  VOLUME KEY", fontSize = 15.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp) }
 
     Panel(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
