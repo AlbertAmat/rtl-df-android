@@ -16,6 +16,8 @@ data class PeakInfo(
     /** Angular span (°) of the bins that have measurements. */
     val coverageDeg: Double,
     val reliable: Boolean,
+    /** Smoothed power per heading bin (NaN = no data), bin i covers [i*binDeg, (i+1)*binDeg). */
+    val profile: DoubleArray = DoubleArray(0),
 )
 
 /**
@@ -103,6 +105,7 @@ class PeakFinder(
             prominenceDb = prominence,
             coverageDeg = coverage,
             reliable = prominence >= minProminenceDb && coverage >= minCoverageDeg,
+            profile = sm,
         )
     }
 }

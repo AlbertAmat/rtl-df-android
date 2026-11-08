@@ -20,6 +20,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Instant
 import kotlin.math.abs
+import kotlin.math.max
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -155,6 +156,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun postMessage(s: String) = msg(s)
 
     private fun f1(v: Double) = String.format(Locale.US, "%.6f", v).trimEnd('0').trimEnd('.')
+
+    /** Trust in a bearing: grows with SNR (a clear signal means a clear lobe), falls with poor GPS accuracy. */
+    private fun rayWeight(snrDb: Double?, accM: Double?): Double {
+        val snrW = ((snrDb ?: 10.0) / 12.0).coerceIn(0.25, 1.5)
+        val gpsW = if (accM == null) 1.0 else (15.0 / max(15.0, accM)).coerceIn(0.3, 1.0)
+        return snrW * gpsW
+    }
 
     private fun norm(x: Double) = ((x % 360.0) + 360.0) % 360.0
 
@@ -361,7 +369,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         var err: String? = null
         if (pts.size >= 2) {
             try {
-                est = Geo.estimate(pts.map { Geo.Ray(it.lat, it.lon, it.bearingTrue) })
+                est = Geo.estimateRobust(pts.map { Geo.Ray(it.lat, it.lon, it.bearingTrue, rayWeight(it.snrDb, it.accM)) })
             } catch (e: Geo.GeoException) {
                 err = e.message
             }

@@ -31,11 +31,13 @@ object MapOverlays {
         data.points.forEachIndexed { i, p ->
             val len = if (est != null && i < est.rays.size) max(1500.0, est.rays[i].rangeM * 1.3) else 3000.0
             val (la, lo) = Geo.destination(p.lat, p.lon, p.bearingTrue, len)
+            val dropped = est != null && i in est.excluded
             map.overlays.add(
                 Polyline().apply {
                     setPoints(listOf(GeoPoint(p.lat, p.lon), GeoPoint(la, lo)))
-                    outlinePaint.color = rayColor
-                    outlinePaint.strokeWidth = 6f
+                    outlinePaint.color = if (dropped) Color.GRAY else rayColor
+                    outlinePaint.strokeWidth = if (dropped) 3f else 6f
+                    if (dropped) outlinePaint.pathEffect = android.graphics.DashPathEffect(floatArrayOf(14f, 10f), 0f)
                 },
             )
             map.overlays.add(
@@ -48,6 +50,28 @@ object MapOverlays {
             )
         }
 
+        if (est != null && est.ellipseMajorM > 0) {
+            // 95% confidence ellipse around the estimate
+            val pts = ArrayList<GeoPoint>()
+            val rot = Math.toRadians(est.ellipseAngleDeg)
+            for (k in 0..48) {
+                val t = 2 * Math.PI * k / 48
+                val u = est.ellipseMajorM * Math.cos(t)
+                val v = est.ellipseMinorM * Math.sin(t)
+                // u along the major axis (bearing rot), v perpendicular; east/north components
+                val east = u * Math.sin(rot) + v * Math.cos(rot)
+                val north = u * Math.cos(rot) - v * Math.sin(rot)
+                val (la, lo) = Geo.destination(est.lat, est.lon, Math.toDegrees(Math.atan2(east, north)), Math.hypot(east, north))
+                pts.add(GeoPoint(la, lo))
+            }
+            map.overlays.add(
+                Polyline().apply {
+                    setPoints(pts)
+                    outlinePaint.color = emitterColor
+                    outlinePaint.strokeWidth = 3f
+                },
+            )
+        }
         if (est != null) {
             map.overlays.add(
                 Marker(map).apply {

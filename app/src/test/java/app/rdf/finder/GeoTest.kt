@@ -67,4 +67,42 @@ class GeoTest {
         val (la, lo) = Geo.destination(40.0, -3.0, 90.0, 1000.0)
         assertEquals(90.0, Geo.initialBearing(40.0, -3.0, la, lo), 0.1)
     }
+
+    private val spots = listOf(40.40 to -3.72, 40.43 to -3.70, 40.41 to -3.68, 40.42 to -3.73, 40.39 to -3.69)
+
+    @Test
+    fun robustDropsBadBearing() {
+        val good = rays(spots, noiseDeg = 0.5).toMutableList()
+        good[2] = good[2].copy(bearingDeg = good[2].bearingDeg + 35.0) // e.g. a reflection
+        val plain = Geo.estimate(good)
+        val robust = Geo.estimateRobust(good)
+        assertEquals(listOf(2), robust.excluded)
+        assertTrue(robust.rmsM < plain.rmsM * 0.5)
+        assertTrue(distToTx(robust.lat, robust.lon) < distToTx(plain.lat, plain.lon))
+        assertTrue(robust.warnings.any { it.contains("#3") })
+    }
+
+    @Test
+    fun robustKeepsGoodData() {
+        val e = Geo.estimateRobust(rays(spots, noiseDeg = 0.5))
+        assertTrue(e.excluded.isEmpty())
+    }
+
+    @Test
+    fun weightsPullTowardTrustedRays() {
+        val base = rays(spots.take(3), noiseDeg = 0.0).toMutableList()
+        base[0] = base[0].copy(bearingDeg = base[0].bearingDeg + 8.0)
+        val equal = Geo.estimate(base)
+        val trusting = Geo.estimate(base.mapIndexed { i, r -> if (i == 0) r.copy(weight = 0.1) else r.copy(weight = 2.0) })
+        assertTrue(distToTx(trusting.lat, trusting.lon) < distToTx(equal.lat, equal.lon))
+    }
+
+    @Test
+    fun ellipseShrinksWithBetterGeometry() {
+        val two = Geo.estimate(rays(spots.take(2)))
+        val five = Geo.estimate(rays(spots))
+        assertTrue(two.ellipseMajorM > 0 && two.ellipseMinorM > 0)
+        assertTrue(five.ellipseMajorM < two.ellipseMajorM)
+        assertTrue(five.ellipseMajorM >= five.ellipseMinorM)
+    }
 }
