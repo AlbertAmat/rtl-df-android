@@ -7,6 +7,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,12 +21,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -53,6 +56,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.geometry.Offset
@@ -145,7 +151,7 @@ fun RdfApp(vm: MainViewModel) {
                 var tab by rememberSaveable { mutableIntStateOf(0) }
                 Column(Modifier.padding(pad).fillMaxSize()) {
                     Header(vm)
-                    Box(Modifier.weight(0.36f).fillMaxWidth().clipToBounds()) { MapPane(vm, holder) }
+                    Box(Modifier.weight(0.32f).fillMaxWidth().clipToBounds()) { MapPane(vm, holder) }
                     TabRow(
                         selectedTabIndex = tab,
                         containerColor = MaterialTheme.colorScheme.surfaceContainer,
@@ -153,6 +159,7 @@ fun RdfApp(vm: MainViewModel) {
                     ) {
                         listOf("Scan", "Track", "Sessions", "Settings").forEachIndexed { i, t ->
                             Tab(
+                                modifier = Modifier.height(38.dp),
                                 selected = tab == i,
                                 onClick = { tab = i },
                                 selectedContentColor = ACCENT,
@@ -162,8 +169,8 @@ fun RdfApp(vm: MainViewModel) {
                         }
                     }
                     Column(
-                        Modifier.weight(0.64f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        Modifier.weight(0.68f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 6.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp),
                     ) {
                         when (tab) {
                             0 -> ScanTab(vm) { tab = 1 }
@@ -185,7 +192,7 @@ fun Chip(text: String, color: Color) {
     Row(
         Modifier.border(1.dp, MaterialTheme.colorScheme.outline)
             .background(MaterialTheme.colorScheme.surfaceContainer)
-            .padding(horizontal = 6.dp, vertical = 5.dp),
+            .padding(horizontal = 6.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(8.dp).background(color))
@@ -208,8 +215,8 @@ fun Header(vm: MainViewModel) {
     val connected by vm.sdrConnected.collectAsStateWithLifecycle()
     val mode by vm.mode.collectAsStateWithLifecycle()
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 3.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         val acc = fix?.accM?.roundToInt()?.toString() ?: "?"
@@ -321,6 +328,7 @@ fun MapPane(vm: MainViewModel, holder: MapHolder) {
 }
 
 // ------------------------------------------------------------------ components
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun NumField(
     vm: MainViewModel,
@@ -329,19 +337,46 @@ fun NumField(
     modifier: Modifier = Modifier,
     type: KeyboardType = KeyboardType.Decimal,
 ) {
-    OutlinedTextField(
-        value = vm.f(key),
+    val interaction = remember { MutableInteractionSource() }
+    val value = vm.f(key)
+    val colors = OutlinedTextFieldDefaults.colors(
+        focusedBorderColor = ACCENT,
+        focusedLabelColor = ACCENT,
+        cursorColor = ACCENT,
+        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+    )
+    BasicTextField(
+        value = value,
         onValueChange = { vm.setField(key, it) },
-        label = { Text(label, maxLines = 1, fontSize = 11.sp) },
         singleLine = true,
+        textStyle = LocalTextStyle.current.merge(TextStyle(color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)),
         keyboardOptions = KeyboardOptions(keyboardType = type),
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = ACCENT,
-            focusedLabelColor = ACCENT,
-            cursorColor = ACCENT,
-            unfocusedBorderColor = MaterialTheme.colorScheme.outline,
-        ),
+        cursorBrush = SolidColor(ACCENT),
+        interactionSource = interaction,
         modifier = modifier,
+        decorationBox = { inner ->
+            // same look as OutlinedTextField, with tighter padding (the stock field is 56 dp tall)
+            OutlinedTextFieldDefaults.DecorationBox(
+                value = value,
+                innerTextField = inner,
+                enabled = true,
+                singleLine = true,
+                visualTransformation = VisualTransformation.None,
+                interactionSource = interaction,
+                label = { Text(label, maxLines = 1, fontSize = 10.sp) },
+                colors = colors,
+                contentPadding = OutlinedTextFieldDefaults.contentPadding(start = 8.dp, top = 6.dp, end = 8.dp, bottom = 5.dp),
+                container = {
+                    OutlinedTextFieldDefaults.Container(
+                        enabled = true,
+                        isError = false,
+                        interactionSource = interaction,
+                        colors = colors,
+                        shape = RoundedCornerShape(2.dp),
+                    )
+                },
+            )
+        },
     )
 }
 
@@ -442,7 +477,7 @@ fun Preset(vm: MainViewModel, label: String, from: String, to: String, modifier:
             vm.setField("scan_stop", to)
         },
         modifier = modifier,
-    ) { Text(label.uppercase(), fontSize = 12.sp, maxLines = 1) }
+    ) { Text(label.uppercase(), fontSize = 10.sp, maxLines = 2, lineHeight = 12.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center) }
 }
 
 @Composable
@@ -450,24 +485,22 @@ fun ScanTab(vm: MainViewModel, goTrack: () -> Unit) {
     val scan by vm.scan.collectAsStateWithLifecycle()
     val mode by vm.mode.collectAsStateWithLifecycle()
 
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Preset(vm, "Yagi 400–470", "400", "470", Modifier.weight(1f))
-        Preset(vm, "PMR 446", "446", "446.2", Modifier.weight(1f))
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Preset(vm, "Yagi\n400–470", "400", "470", Modifier.weight(1f))
+        Preset(vm, "PMR\n446", "446", "446.2", Modifier.weight(1f))
+        Preset(vm, "70 cm\n430–440", "430", "440", Modifier.weight(1f))
+        Preset(vm, "ISM\n433", "433", "434.8", Modifier.weight(1f))
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Preset(vm, "70 cm 430–440", "430", "440", Modifier.weight(1f))
-        Preset(vm, "ISM 433", "433", "434.8", Modifier.weight(1f))
-    }
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         NumField(vm, "scan_start", "From (MHz)", Modifier.weight(1f))
         NumField(vm, "scan_stop", "To (MHz)", Modifier.weight(1f))
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         NumField(vm, "scan_dur", "Duration (s)", Modifier.weight(1f))
         NumField(vm, "scan_thr", "SNR threshold (dB)", Modifier.weight(1f))
         NumField(vm, "scan_gain", "Gain (dB)", Modifier.weight(1f))
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         TacButton(onClick = { vm.startScan() }, enabled = mode != Mode.Scan, modifier = Modifier.weight(1f)) {
             Text("START SCAN")
         }
@@ -525,7 +558,7 @@ fun TrackTab(vm: MainViewModel, holder: MapHolder) {
     val listening by vm.listen.collectAsStateWithLifecycle()
     val useSensor = vm.f("use_sensor") == "true"
 
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         TacButton(onClick = { if (connected) vm.disconnect() else vm.connect() }, modifier = Modifier.weight(1f)) {
             Text(if (connected) "DISCONNECT SDR" else "CONNECT SDR", fontSize = 13.sp)
         }
@@ -535,12 +568,12 @@ fun TrackTab(vm: MainViewModel, holder: MapHolder) {
     }
     Text(if (connected) sdrInfo else "Disconnected", fontSize = 12.sp, color = MUTED)
 
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         NumField(vm, "trk_freq", "Frequency (MHz)", Modifier.weight(1.4f))
         NumField(vm, "trk_bw", "Channel (kHz)", Modifier.weight(1f))
         NumField(vm, "trk_gain", "Gain (dB)", Modifier.weight(1f))
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         TacButton(onClick = { vm.startTrack() }, enabled = mode != Mode.Track, modifier = Modifier.weight(1f)) {
             Text("START TRACK", fontSize = 13.sp)
         }
@@ -553,12 +586,12 @@ fun TrackTab(vm: MainViewModel, holder: MapHolder) {
     }
 
     // Close to the emitter the front end overloads: step the tuner gain down (or let it do so by itself)
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
         TacOutlinedButton(onClick = { vm.stepGain(-1) }, modifier = Modifier.weight(1f)) {
             Text("− ATT", fontSize = 14.sp, fontWeight = FontWeight.Bold)
         }
         Panel(Modifier.weight(1.1f)) {
-            Column(Modifier.fillMaxWidth().padding(vertical = 5.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Label("Gain")
                 Text(
                     gainNow?.let { "${f1(it)} dB" } ?: "AGC",
@@ -571,20 +604,25 @@ fun TrackTab(vm: MainViewModel, holder: MapHolder) {
         TacOutlinedButton(onClick = { vm.stepGain(1) }, modifier = Modifier.weight(1f)) {
             Text("+ GAIN", fontSize = 14.sp, fontWeight = FontWeight.Bold)
         }
+        // auto-attenuate when the signal clips: filled = on
+        val auto = vm.f("auto_att") == "true"
+        val toggle: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit =
+            { Text("AUTO\nATT", fontSize = 11.sp, lineHeight = 13.sp, fontWeight = FontWeight.Bold, textAlign = androidx.compose.ui.text.style.TextAlign.Center) }
+        if (auto) TacButton(onClick = { vm.setField("auto_att", "false") }, modifier = Modifier.weight(0.8f), content = toggle)
+        else TacOutlinedButton(onClick = { vm.setField("auto_att", "true") }, modifier = Modifier.weight(0.8f), content = toggle)
     }
-    SwitchRow("Auto-attenuate when clipping", vm.f("auto_att") == "true") { vm.setField("auto_att", it.toString()) }
 
     Panel(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(10.dp)) {
+        Column(Modifier.padding(8.dp)) {
             Label("Signal · dBFS")
             Row(verticalAlignment = Alignment.Bottom) {
                 Text(
                     (live.smoothDb ?: live.powerDb)?.let { f1(it) } ?: "--",
-                    fontSize = 44.sp,
+                    fontSize = 34.sp,
                     fontWeight = FontWeight.Bold,
                     color = ACCENT,
                 )
-                Text(" dB", Modifier.padding(bottom = 8.dp), color = MUTED)
+                Text(" dB", Modifier.padding(bottom = 5.dp), color = MUTED)
             }
             Text(
                 "SNR ${live.snrDb?.let { f1(it) } ?: "--"} dB · 10 s peak ${live.peakDb?.let { f1(it) } ?: "--"} dB",
@@ -592,19 +630,19 @@ fun TrackTab(vm: MainViewModel, holder: MapHolder) {
                 color = MUTED,
             )
             if (live.clipping) Text("⚠ CLIPPING · PRESS − ATT", color = BAD, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-            Spark(live.history, Modifier.fillMaxWidth().height(70.dp), OK, MaterialTheme.colorScheme.outlineVariant)
+            Spark(live.history, Modifier.fillMaxWidth().height(44.dp), OK, MaterialTheme.colorScheme.outlineVariant)
         }
     }
 
     Panel(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             val sqlDb = vm.f("listen_sql").replace(',', '.').toDoubleOrNull() ?: 6.0
             val rx = (live.snrDb ?: -99.0) > sqlDb
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Label("Receiver · ${vm.f("trk_freq")} MHz", Modifier.weight(1f))
                 if (listening) Text(if (rx) "● RX" else "○ SQUELCH", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (rx) OK else MUTED)
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 TacButton(
                     onClick = { vm.setListen(!listening) },
                     enabled = mode == Mode.Track || listening,
@@ -615,7 +653,7 @@ fun TrackTab(vm: MainViewModel, holder: MapHolder) {
                     modifier = Modifier.weight(0.6f),
                 ) { Text(vm.f("listen_mode"), fontSize = 14.sp, fontWeight = FontWeight.Bold) }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 NumField(vm, "listen_sql", "Squelch (SNR dB)", Modifier.weight(1f))
                 NumField(vm, "listen_vol", "Volume (%)", Modifier.weight(1f))
             }
@@ -623,7 +661,7 @@ fun TrackTab(vm: MainViewModel, holder: MapHolder) {
     }
 
     Panel(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Label("Antenna bearing · true")
             if (useSensor) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -631,11 +669,11 @@ fun TrackTab(vm: MainViewModel, holder: MapHolder) {
                         heading.trueDeg?.let { String.format(Locale.US, "%03d°", it.roundToInt() % 360) }
                             ?: if (heading.hasSensor) "-- (too vertical)" else "no sensor",
                         Modifier.weight(1f),
-                        fontSize = 40.sp,
+                        fontSize = 32.sp,
                         fontWeight = FontWeight.Bold,
                         color = ACCENT,
                     )
-                    CompassDial(heading.trueDeg, Modifier.size(84.dp))
+                    CompassDial(heading.trueDeg, Modifier.size(62.dp))
                 }
                 val acc = when (heading.accuracy) {
                     3 -> "high"; 2 -> "medium"; 1 -> "low"; else -> "unreliable"
@@ -671,7 +709,7 @@ fun EstimateCard(data: SessionData, holder: MapHolder) {
     if (data.points.isEmpty()) return
     val ctx = LocalContext.current
     Panel(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             val e = data.estimate
             if (e == null) {
                 Text("Estimate: ${data.estimateError ?: ""}", fontSize = 14.sp)
@@ -687,7 +725,7 @@ fun EstimateCard(data: SessionData, holder: MapHolder) {
                     color = MUTED,
                 )
                 e.warnings.forEach { Text("⚠ $it", color = WARN, fontSize = 13.sp) }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TacOutlinedButton(
                         onClick = {
                             holder.map?.controller?.setZoom(16.0)
@@ -769,7 +807,7 @@ fun SessionsTab(vm: MainViewModel) {
             }
         }
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         TacOutlinedButton(onClick = { vm.newSession() }, modifier = Modifier.weight(1f)) {
             Text("NEW HUNT (TRACK FREQ.)", fontSize = 12.sp)
         }
@@ -777,7 +815,7 @@ fun SessionsTab(vm: MainViewModel) {
             Text("DELETE SESSION", fontSize = 12.sp)
         }
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         TacButton(onClick = { vm.export(ctx, true) }, enabled = cur != null, modifier = Modifier.weight(1f)) { Text("SHARE CSV") }
         TacButton(onClick = { vm.export(ctx, false) }, enabled = cur != null, modifier = Modifier.weight(1f)) { Text("SHARE GEOJSON") }
     }
@@ -799,11 +837,11 @@ fun SettingsTab(vm: MainViewModel, holder: MapHolder) {
     val ctx = LocalContext.current
 
     Text("SDR driver connection (rtl_tcp)", fontWeight = FontWeight.Bold)
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         NumField(vm, "sdr_host", "Host", Modifier.weight(1.5f), KeyboardType.Uri)
         NumField(vm, "sdr_port", "Port", Modifier.weight(1f), KeyboardType.Number)
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         NumField(vm, "sdr_ppm", "Correction (ppm)", Modifier.weight(1f))
         NumField(vm, "sdr_settle", "Settle time (ms)", Modifier.weight(1f))
     }
@@ -858,7 +896,7 @@ fun SettingsTab(vm: MainViewModel, holder: MapHolder) {
         fontSize = 12.sp,
         color = MUTED,
     )
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         NumField(vm, "dl_zmin", "Min zoom", Modifier.weight(1f), KeyboardType.Number)
         NumField(vm, "dl_zmax", "Max zoom", Modifier.weight(1f), KeyboardType.Number)
     }

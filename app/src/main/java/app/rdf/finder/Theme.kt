@@ -8,6 +8,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Shapes
@@ -124,7 +125,10 @@ private fun monoTypography(): Typography {
 @Composable
 fun TacticalTheme(night: Boolean, content: @Composable () -> Unit) {
     val scheme: ColorScheme = if (night) NightScheme else DayScheme
-    CompositionLocalProvider(LocalTac provides if (night) NightPalette else DayPalette) {
+    CompositionLocalProvider(
+        LocalTac provides if (night) NightPalette else DayPalette,
+        LocalMinimumInteractiveComponentSize provides 0.dp, // compact: no 48 dp minimum around switches, radios, text buttons
+    ) {
         MaterialTheme(
             colorScheme = scheme,
             shapes = Shapes(Square, Square, Square, Square, Square),
@@ -134,7 +138,7 @@ fun TacticalTheme(night: Boolean, content: @Composable () -> Unit) {
     }
 }
 
-private val ButtonPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+private val ButtonPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
 
 /** Square, tall, glove-friendly filled button. */
 @Composable
@@ -145,7 +149,7 @@ fun TacButton(
     content: @Composable RowScope.() -> Unit,
 ) = Button(
     onClick = onClick,
-    modifier = modifier.heightIn(min = 52.dp),
+    modifier = modifier.heightIn(min = 40.dp),
     enabled = enabled,
     shape = Square,
     contentPadding = ButtonPadding,
@@ -165,7 +169,7 @@ fun TacOutlinedButton(
     content: @Composable RowScope.() -> Unit,
 ) = OutlinedButton(
     onClick = onClick,
-    modifier = modifier.heightIn(min = 52.dp),
+    modifier = modifier.heightIn(min = 40.dp),
     enabled = enabled,
     shape = Square,
     contentPadding = ButtonPadding,
